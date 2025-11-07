@@ -1,0 +1,9 @@
+@startuml
+title Lister Groupe
+
+(Lister Groupe) ..> (Charger données \n groupes) : include
+(Lister Groupe) ..> (Afficher liste groupes) : include
+(Lister Groupe) ..> (Afficher nom groupe) : include
+(Lister Groupe) .> (Trier liste groupes) : extend
+
+@enduml
