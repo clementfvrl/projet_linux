@@ -2,15 +2,15 @@
 title Lister Groupe
 actor Utilisateur as User 
 
-(Se loguer) <.. (Lister Groupe) : << extends >> 
+(Se loguer) <.. (Lister Groupe) : extends 
 
 note top of  (Se loguer) : "Si pas encore logué"
 
 (User) .> (Lister Groupe) 
 
-(Charger données \n groupes) <.. (Lister Groupe)  : include
-(Afficher liste groupes) <.. (Lister Groupe) : include
-(Afficher nom groupe) <.. (Lister Groupe) : include
-(Trier liste groupes) <.. (Lister Groupe) : extend
+(Charger données \n groupes) ..> (Lister Groupe)  : include
+(Afficher groupes existant) <.. (Lister Groupe) : extends
+note top of  (Afficher groupes existant) : "Si tout les includes sont valides"
+(Libérer ressources) <.. (Lister Groupe) : extends
 
 @enduml

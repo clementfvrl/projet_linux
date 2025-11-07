@@ -8,12 +8,14 @@ usecase (Rejoindre Groupe) as join
 
 :User: -right- join
 
-(Se loguer) <.. join : << extends >> 
+(Se loguer) <.. join :  extends  
 
 note top of  (Se loguer) : "Si pas encore logué"
 
-(Renseigner Groupe) ..> join : << include >>
-(Vérifier Groupe) ..> join : << include >>
-(Ajouter utilisateur au groupe) <.. join : << extends >>
+(Renseigner Groupe) ..> join : include 
+(Vérifier Groupe) ..> join : include 
+(Ajouter utilisateur au groupe) <.. join :  extends 
+note top of  (Ajouter utilisateur au groupe) : "Si tout les includes sont valides"
+(Notifier membres du groupe) <.. join :  extends
 
 @enduml
