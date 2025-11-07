@@ -1,0 +1,17 @@
+@startuml
+
+actor Utilisateur as User
+
+(Se loguer) <.. (Lister Membres Groupe) : extends
+
+note top of (Se loguer) : "Si pas encore logué"
+
+(User) .> (Lister Membres Groupe)
+
+(Renseigner Groupe) <.. (Lister Membres Groupe) : include
+(Verifier \n Groupe) ..> (Lister Membres Groupe) : include
+(Verifier \n appartenance)..>(Lister Membres Groupe) : include
+(Afficher \n membres) <.. (Lister Membres Groupe) : include
+(Libérer ressources) <.. (Lister Membres Groupe) : include
+
+@enduml

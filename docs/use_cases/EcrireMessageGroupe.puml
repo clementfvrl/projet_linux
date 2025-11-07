@@ -2,7 +2,7 @@
 
 actor Utilisateur as User
 
-(Se loguer) <.. (Ecrire Message Groupe) : << extends >>
+(Se loguer) <.. (Ecrire Message Groupe) : extends 
 
 note top of  (Se loguer) : "Si pas encore logué"
 
