@@ -15,7 +15,7 @@ DATA_DIR = data
 
 # Fichiers sources
 SRC_ENVOI = $(SRC_DIR)/EnvoiMessage.c
-SRC_RECEPTION = $(SRC_DIR)/ReceptionMessage.c
+SRC_SERVEUR = $(SRC_DIR)/Serveur.c
 SRC_MESSAGE = $(SRC_DIR)/Message.c
 SRC_GROUPE = $(SRC_DIR)/Groupe.c
 SRC_STATS = $(SRC_DIR)/Stats.c
@@ -29,10 +29,10 @@ OBJ_UTILS = $(OBJ_DIR)/Utils.o
 
 # Exécutables
 BIN_ENVOI = $(BIN_DIR)/EnvoiMessage
-BIN_RECEPTION = $(BIN_DIR)/ReceptionMessage
+BIN_SERVEUR = $(BIN_DIR)/Serveur
 
 # Règle par défaut
-all: directories $(BIN_ENVOI) $(BIN_RECEPTION)
+all: directories $(BIN_ENVOI) $(BIN_SERVEUR)
 
 # Création des répertoires nécessaires
 directories:
@@ -45,10 +45,10 @@ $(BIN_ENVOI): $(SRC_ENVOI) $(OBJ_MESSAGE) $(OBJ_GROUPE) $(OBJ_STATS) $(OBJ_UTILS
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 	@echo "✓ EnvoiMessage compilé avec succès"
 
-# Compilation de ReceptionMessage
-$(BIN_RECEPTION): $(SRC_RECEPTION) $(OBJ_MESSAGE) $(OBJ_GROUPE) $(OBJ_STATS) $(OBJ_UTILS)
+# Compilation de Serveur
+$(BIN_SERVEUR): $(SRC_SERVEUR) $(OBJ_MESSAGE) $(OBJ_GROUPE) $(OBJ_STATS) $(OBJ_UTILS)
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
-	@echo "✓ ReceptionMessage compilé avec succès"
+	@echo "✓ Serveur compilé avec succès"
 
 # Compilation des modules
 $(OBJ_DIR)/Message.o: $(SRC_MESSAGE) $(INC_DIR)/Message.h
@@ -79,9 +79,9 @@ test-envoi: $(BIN_ENVOI)
 	@echo "Lancement de EnvoiMessage..."
 	./$(BIN_ENVOI) 1
 
-test-reception: $(BIN_RECEPTION)
-	@echo "Lancement de ReceptionMessage..."
-	./$(BIN_RECEPTION)
+test-reception: $(BIN_SERVEUR)
+	@echo "Lancement de Serveur..."
+	./$(BIN_SERVEUR)
 
 # Aide
 help:
@@ -90,7 +90,7 @@ help:
 	@echo "  make clean    - Supprime objets et exécutables"
 	@echo "  make clean-data - Supprime les données"
 	@echo "  make test-envoi - Lance EnvoiMessage"
-	@echo "  make test-reception - Lance ReceptionMessage"
+	@echo "  make test-reception - Lance Serveur"
 	@echo "  make help     - Affiche cette aide"
 
 # Indique que ce ne sont pas des fichiers
