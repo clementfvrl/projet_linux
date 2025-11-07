@@ -1,0 +1,19 @@
+@startuml
+
+actor Utilisateur as User
+
+(Se loguer) <.. (Ecrire Message Groupe) : << extends >>
+
+note top of  (Se loguer) : "Si pas encore logué"
+
+(User) .> (Ecrire Message Groupe)
+
+(Renseigner Groupe) <.. (Ecrire Message Groupe) : include
+(Verifier \n Groupe) ..> (Ecrire Message Groupe) : include
+(Verifier \n appartenance)..>(Ecrire Message Groupe) : include
+(Ecrire \n message) <.. (Ecrire Message Groupe) : include
+(Envoyer message) <.. (Ecrire Message Groupe) : include
+(Notifier \n membres du groupe) <.. (Ecrire Message Groupe) : include
+(Libérer ressources) <.. (Ecrire Message Groupe) : include
+
+@enduml
