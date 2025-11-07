@@ -1,9 +1,16 @@
 @startuml
 title Lister Groupe
+actor Utilisateur as User 
 
-(Lister Groupe) ..> (Charger données \n groupes) : include
-(Lister Groupe) ..> (Afficher liste groupes) : include
-(Lister Groupe) ..> (Afficher nom groupe) : include
-(Lister Groupe) .> (Trier liste groupes) : extend
+(Se loguer) <.. (Lister Groupe) : << extends >> 
+
+note top of  (Se loguer) : "Si pas encore logué"
+
+(User) .> (Lister Groupe) 
+
+(Charger données \n groupes) <.. (Lister Groupe)  : include
+(Afficher liste groupes) <.. (Lister Groupe) : include
+(Afficher nom groupe) <.. (Lister Groupe) : include
+(Trier liste groupes) <.. (Lister Groupe) : extend
 
 @enduml

@@ -1,0 +1,18 @@
+@startuml
+title Quitter Groupe
+
+actor Utilisateur as User
+
+(Se loguer) <.. (Quitter Groupe) : extends 
+
+note top of  (Se loguer) : "Si pas encore logué"
+
+(User) .> (Quitter Groupe)
+
+(Renseigner Groupe) <.. (Quitter Groupe) : include
+(Verifier \n appartenance)..>(Quitter Groupe) : include
+(Confirmer \n action) <.. (Quitter Groupe) : include
+(Supprimer utilisateur \n du groupe) <.. (Quitter Groupe) : include
+(Notifier \n membres du groupe) <.. (Quitter Groupe) : include
+(Libérer ressources) <.. (Quitter Groupe) : include
+@enduml
