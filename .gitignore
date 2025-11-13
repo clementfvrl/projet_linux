@@ -6,6 +6,7 @@
 *.ko
 *.obj
 *.elf
+obj/
 
 # Linker output
 *.ilk
@@ -35,7 +36,7 @@
 *.i*86
 *.x86_64
 *.hex
-./bin
+bin/
 
 # Debug files
 *.dSYM/
@@ -54,3 +55,6 @@ dkms.conf
 
 # debug information files
 *.dwo
+
+# Data
+data/
