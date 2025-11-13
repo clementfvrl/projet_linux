@@ -13,13 +13,12 @@ cd projet_linux
 
 ## Utilisation
 
-```bash
-git checkout -b ma_branche
+```
 # Je fais les modifications de mon code etc
 git pull
 git add .
 git commit -m "mon message"
-git push origin ma_branche
+git push
 ```
 
 ## Description
