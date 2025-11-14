@@ -345,8 +345,6 @@ void traiter_deconnexion(Message *msg)
 
 void traiter_creation_groupe(Message *msg, struct sockaddr_in *addr, int sockfd)
 {
-    printf("[DEBUG] Tentative création groupe '%s' par client %d\n", msg->texte, msg->id_client);
-
     int groupe_id = creer_groupe(msg->texte, msg->id_client);
 
     Message reponse;
@@ -380,18 +378,12 @@ void traiter_creation_groupe(Message *msg, struct sockaddr_in *addr, int sockfd)
         }
     }
 
-    printf("[DEBUG] Envoi réponse type=%d texte='%s'\n", reponse.type, reponse.texte);
-
     ssize_t sent = sendto(sockfd, &reponse, sizeof(reponse), 0,
                           (struct sockaddr *)addr, sizeof(*addr));
 
     if (sent < 0)
     {
         perror("[ERREUR] sendto() dans traiter_creation_groupe");
-    }
-    else
-    {
-        printf("[DEBUG] %ld octets envoyés au client\n", (long)sent);
     }
 }
 
