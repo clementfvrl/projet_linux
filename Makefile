@@ -1,5 +1,5 @@
 # Makefile - Projet ISY - Messagerie Instantanée
-# Architecture modulaire : server, client, groupe, affichage, crypto, stats
+# Architecture modulaire : serveur, client, groupe, affichage, crypto, stats
 
 # === CONFIGURATION ===
 CC = gcc
@@ -13,7 +13,7 @@ OBJ_DIR = obj
 BIN_DIR = bin
 
 # === FICHIERS SOURCES ===
-SRC_SERVER = $(SRC_DIR)/server.c
+SRC_SERVER = $(SRC_DIR)/serveur.c
 SRC_CLIENT = $(SRC_DIR)/client.c
 SRC_GROUPE = $(SRC_DIR)/groupe.c
 SRC_AFFICHAGE = $(SRC_DIR)/affichage.c
@@ -30,7 +30,7 @@ OBJ_STATS = $(OBJ_DIR)/stats.o
 SHARED_OBJS = $(OBJ_COMMUN) $(OBJ_CRYPTO) $(OBJ_STATS)
 
 # === EXÉCUTABLES ===
-BIN_SERVER = $(BIN_DIR)/server
+BIN_SERVER = $(BIN_DIR)/serveur
 BIN_CLIENT = $(BIN_DIR)/client
 BIN_GROUPE = $(BIN_DIR)/groupe
 BIN_AFFICHAGE = $(BIN_DIR)/affichage
@@ -38,7 +38,7 @@ BIN_AFFICHAGE = $(BIN_DIR)/affichage
 ALL_BINS = $(BIN_SERVER) $(BIN_CLIENT) $(BIN_GROUPE) $(BIN_AFFICHAGE)
 
 # === RÈGLES PRINCIPALES ===
-.PHONY: all clean directories help test run-server run-client
+.PHONY: all clean directories help test run-serveur run-client
 
 # Règle par défaut : tout compiler
 all: directories $(ALL_BINS)
@@ -102,8 +102,8 @@ clean:
 
 # === TESTS ET LANCEMENT ===
 
-# Lancer le server
-run-server: $(BIN_SERVER)
+# Lancer le serveur
+run-serveur: $(BIN_SERVER)
 	@echo "=== Démarrage Serveur ISY ==="
 	./$(BIN_SERVER)
 
@@ -115,7 +115,7 @@ run-client: $(BIN_CLIENT)
 # Test rapide : compile et vérifie que les binaires existent
 test: all
 	@echo "=== Vérification des binaires ==="
-	@test -f $(BIN_SERVER) && echo "✓ server OK" || echo "✗ server manquant"
+	@test -f $(BIN_SERVER) && echo "✓ serveur OK" || echo "✗ serveur manquant"
 	@test -f $(BIN_CLIENT) && echo "✓ client OK" || echo "✗ client manquant"
 	@test -f $(BIN_GROUPE) && echo "✓ groupe OK" || echo "✗ groupe manquant"
 	@test -f $(BIN_AFFICHAGE) && echo "✓ affichage OK" || echo "✗ affichage manquant"
@@ -132,11 +132,11 @@ help:
 	@echo "  make test         - Compile et vérifie binaires"
 	@echo ""
 	@echo "Commandes de lancement :"
-	@echo "  make run-server   - Lance le server ISY"
+	@echo "  make run-serveur   - Lance le serveur ISY"
 	@echo "  make run-client   - Lance un client ISY"
 	@echo ""
 	@echo "Exécutables générés :"
-	@echo "  bin/server       - Serveur central UDP"
+	@echo "  bin/serveur       - Serveur central UDP"
 	@echo "  bin/client        - Interface utilisateur"
 	@echo "  bin/groupe        - Processus de groupe (IPC)"
 	@echo "  bin/affichage     - Affichage parallèle messages"
@@ -149,4 +149,4 @@ help:
 	@echo ""
 
 # Indique que ce ne sont pas des fichiers
-.PHONY: all clean directories help test run-server run-client
+.PHONY: all clean directories help test run-serveur run-client
