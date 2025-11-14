@@ -1,6 +1,3 @@
-// serveur.c - Serveur ISY
-// PHASE 2 : Gestion des groupes (CRUD)
-
 #include "commun.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -110,9 +107,9 @@ int pseudo_existe(const char *pseudo)
     for (int i = 0; i < NB_MAX_CLIENTS; i++)
     {
         if (clients[i].actif && strcmp(clients[i].pseudo, pseudo) == 0)
-            return 1;
+            return i; // Retourne l'ID du client qui utilise ce pseudo
     }
-    return 0;
+    return -1; // Pseudo libre
 }
 
 void connecter_client(int id, const char *pseudo, struct sockaddr_in *addr)
@@ -281,10 +278,27 @@ void traiter_connexion(Message *msg, struct sockaddr_in *addr, int sockfd)
         return;
     }
 
-    // Vérifier unicité du pseudo
-    if (pseudo_existe(msg->pseudo))
+    // Si l'ID est déjà utilisé, déconnecter l'ancien client d'abord
+    if (clients[client_id].actif)
     {
-        printf("[ERREUR] Pseudo '%s' déjà utilisé\n", msg->pseudo);
+        printf("[WARN] ID %d déjà utilisé par '%s', remplacement...\n",
+               client_id, clients[client_id].pseudo);
+
+        // Retirer l'ancien client de tous ses groupes
+        for (int i = 0; i < NB_MAX_GROUPES; i++)
+        {
+            if (groupes[i].actif)
+            {
+                retirer_membre_groupe(i, client_id);
+            }
+        }
+    }
+
+    // Vérifier unicité du pseudo (mais autoriser la reconnexion avec le même ID)
+    int pseudo_utilisateur_id = pseudo_existe(msg->pseudo);
+    if (pseudo_utilisateur_id >= 0 && pseudo_utilisateur_id != client_id)
+    {
+        printf("[ERREUR] Pseudo '%s' déjà utilisé par client %d\n", msg->pseudo, pseudo_utilisateur_id);
 
         Message reponse;
         initialiser_message(&reponse);
@@ -312,11 +326,27 @@ void traiter_connexion(Message *msg, struct sockaddr_in *addr, int sockfd)
 
 void traiter_deconnexion(Message *msg)
 {
-    deconnecter_client(msg->id_client);
+    int client_id = msg->id_client;
+
+    if (client_id < 0 || client_id >= NB_MAX_CLIENTS)
+        return;
+
+    // Retirer le client de tous les groupes
+    for (int i = 0; i < NB_MAX_GROUPES; i++)
+    {
+        if (groupes[i].actif)
+        {
+            retirer_membre_groupe(i, client_id);
+        }
+    }
+
+    deconnecter_client(client_id);
 }
 
 void traiter_creation_groupe(Message *msg, struct sockaddr_in *addr, int sockfd)
 {
+    printf("[DEBUG] Tentative création groupe '%s' par client %d\n", msg->texte, msg->id_client);
+
     int groupe_id = creer_groupe(msg->texte, msg->id_client);
 
     Message reponse;
@@ -329,6 +359,7 @@ void traiter_creation_groupe(Message *msg, struct sockaddr_in *addr, int sockfd)
         reponse.id_groupe = groupe_id;
         snprintf(reponse.texte, TAILLE_TEXTE, "Groupe '%.30s' créé (ID: %d)",
                  msg->texte, groupe_id);
+        printf("[REPONSE] Succès création groupe ID=%d\n", groupe_id);
     }
     else
     {
@@ -338,17 +369,30 @@ void traiter_creation_groupe(Message *msg, struct sockaddr_in *addr, int sockfd)
             reponse.type = MSG_ERREUR;
             reponse.id_groupe = -1;
             snprintf(reponse.texte, TAILLE_TEXTE, "Groupe '%.30s' existe déjà", msg->texte);
+            printf("[REPONSE] Erreur: groupe existe déjà\n");
         }
         else
         {
             reponse.type = MSG_ERREUR;
             reponse.id_groupe = -1;
             snprintf(reponse.texte, TAILLE_TEXTE, "Échec création groupe (limite atteinte)");
+            printf("[REPONSE] Erreur: limite atteinte\n");
         }
     }
 
-    sendto(sockfd, &reponse, sizeof(reponse), 0,
-           (struct sockaddr *)addr, sizeof(*addr));
+    printf("[DEBUG] Envoi réponse type=%d texte='%s'\n", reponse.type, reponse.texte);
+
+    ssize_t sent = sendto(sockfd, &reponse, sizeof(reponse), 0,
+                          (struct sockaddr *)addr, sizeof(*addr));
+
+    if (sent < 0)
+    {
+        perror("[ERREUR] sendto() dans traiter_creation_groupe");
+    }
+    else
+    {
+        printf("[DEBUG] %ld octets envoyés au client\n", (long)sent);
+    }
 }
 
 void traiter_liste_groupes(Message *msg, struct sockaddr_in *addr, int sockfd)
