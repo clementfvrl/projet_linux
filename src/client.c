@@ -3,6 +3,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <fcntl.h>
 #include <sys/socket.h>
 #include <sys/select.h>
 #include <sys/time.h>
@@ -55,6 +56,33 @@ void afficher_menu(void)
     printf("║ 8. Quitter                             ║\n");
     printf("╚════════════════════════════════════════╝\n");
     printf("Choix : ");
+}
+
+void vider_buffer_udp(void)
+{
+    Message dummy;
+    struct sockaddr_in from;
+    socklen_t fromlen = sizeof(from);
+
+    // Mettre le socket en mode non-bloquant temporairement
+    int flags = fcntl(sockfd, F_GETFL, 0);
+    fcntl(sockfd, F_SETFL, flags | O_NONBLOCK);
+
+    int count = 0;
+    // Vider tous les paquets en attente
+    while (recvfrom(sockfd, &dummy, sizeof(dummy), 0,
+                    (struct sockaddr *)&from, &fromlen) > 0)
+    {
+        count++;
+    }
+
+    // Remettre en mode bloquant
+    fcntl(sockfd, F_SETFL, flags);
+
+    if (count > 0)
+    {
+        printf("[DEBUG] %d ancien(s) message(s) vidé(s) du buffer\n", count);
+    }
 }
 
 /* ========================================================================
@@ -144,9 +172,14 @@ void se_connecter(void)
         return;
     }
 
+    // IMPORTANT : Vider le buffer UDP avant d'attendre la réponse
+    vider_buffer_udp();
+
     // Attendre réponse
     Message reponse;
-    if (recevoir_reponse(&reponse, 2) > 0)
+    int resultat = recevoir_reponse(&reponse, 5);
+
+    if (resultat > 0)
     {
         if (reponse.type == MSG_CONNEXION)
         {
@@ -158,6 +191,18 @@ void se_connecter(void)
         {
             printf("[ERREUR] %s\n", reponse.texte);
         }
+        else
+        {
+            printf("[WARN] Type de réponse inattendu: %d\n", reponse.type);
+        }
+    }
+    else if (resultat == 0)
+    {
+        printf("[ERREUR] Timeout - pas de réponse du serveur\n");
+    }
+    else
+    {
+        printf("[ERREUR] Erreur lors de la réception\n");
     }
 }
 
