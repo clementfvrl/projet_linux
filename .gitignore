@@ -58,3 +58,7 @@ dkms.conf
 
 # Data
 data/
+
+# Claude assets
+.claude/
+CLAUDE.md

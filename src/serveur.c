@@ -1,619 +1,338 @@
-#include "commun.h"
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <unistd.h>
-#include <sys/socket.h>
-#include <netinet/in.h>
-#include <arpa/inet.h>
-#include <signal.h>
+#include "../include/commun.h"
+#include "../include/crypto.h"
+#include "../include/stats.h"
+#include <sys/wait.h>
 
-/* ========================================================================
-   STRUCTURES DE DONNÉES
-   ======================================================================== */
+/* Global variables */
+volatile sig_atomic_t serveur_actif = 1;
+int sockfd_serveur;
+groupe_info groupes[MAX_GROUPES];
+int nb_groupes = 0;
+config_serveur config;
 
-// Structure représentant un client connecté
-typedef struct
-{
-    int id;
-    char pseudo[TAILLE_PSEUDO];
-    struct sockaddr_in adresse;
-    int actif; // 1 si connecté, 0 sinon
-} Client;
-
-// Structure représentant un groupe
-typedef struct
-{
-    int id;
-    char nom[TAILLE_NOM_GROUPE];
-    int moderateur_id;           // ID du créateur du groupe
-    int membres[NB_MAX_CLIENTS]; // IDs des membres
-    int nb_membres;
-    int actif; // 1 si groupe existe, 0 si supprimé
-} Groupe;
-
-/* ========================================================================
-   VARIABLES GLOBALES
-   ======================================================================== */
-
-static volatile int serveur_actif = 1;
-static Client clients[NB_MAX_CLIENTS];
-static Groupe groupes[NB_MAX_GROUPES];
-static int nb_groupes = 0;
-
-/* ========================================================================
-   GESTION DES SIGNAUX
-   ======================================================================== */
-
-void gestionnaire_sigint(int sig)
-{
-    (void)sig;
-    printf("\n[INFO] Arrêt du serveur demandé...\n");
-    serveur_actif = 0;
-}
-
-/* ========================================================================
-   INITIALISATION
-   ======================================================================== */
-
-void initialiser_clients(void)
-{
-    for (int i = 0; i < NB_MAX_CLIENTS; i++)
-    {
-        clients[i].id = i;
-        clients[i].actif = 0;
-        memset(clients[i].pseudo, 0, TAILLE_PSEUDO);
+/* Signal handler for CTRL-C */
+void gestionnaire_signal(int sig) {
+    if (sig == SIGINT) {
+        printf("\n\nReception signal SIGINT, arret du serveur...\n");
+        serveur_actif = 0;
     }
 }
 
-void initialiser_groupes(void)
-{
-    for (int i = 0; i < NB_MAX_GROUPES; i++)
-    {
-        groupes[i].id = i;
-        groupes[i].actif = 0;
-        groupes[i].nb_membres = 0;
-        memset(groupes[i].nom, 0, TAILLE_NOM_GROUPE);
-        for (int j = 0; j < NB_MAX_CLIENTS; j++)
-        {
-            groupes[i].membres[j] = -1;
+/* Find group by name */
+int trouver_groupe(const char *nom) {
+    for (int i = 0; i < nb_groupes; i++) {
+        if (groupes[i].actif && strcmp(groupes[i].nom, nom) == 0) {
+            return i;
         }
     }
-}
-
-/* ========================================================================
-   GESTION DES CLIENTS
-   ======================================================================== */
-
-int trouver_client_libre(void)
-{
-    for (int i = 0; i < NB_MAX_CLIENTS; i++)
-    {
-        if (!clients[i].actif)
-            return i;
-    }
     return -1;
 }
 
-int trouver_client_par_id(int id)
-{
-    if (id >= 0 && id < NB_MAX_CLIENTS && clients[id].actif)
-        return id;
-    return -1;
-}
-
-int pseudo_existe(const char *pseudo)
-{
-    for (int i = 0; i < NB_MAX_CLIENTS; i++)
-    {
-        if (clients[i].actif && strcmp(clients[i].pseudo, pseudo) == 0)
-            return i; // Retourne l'ID du client qui utilise ce pseudo
-    }
-    return -1; // Pseudo libre
-}
-
-void connecter_client(int id, const char *pseudo, struct sockaddr_in *addr)
-{
-    if (id < 0 || id >= NB_MAX_CLIENTS)
-        return;
-
-    clients[id].actif = 1;
-    strncpy(clients[id].pseudo, pseudo, TAILLE_PSEUDO - 1);
-    clients[id].pseudo[TAILLE_PSEUDO - 1] = '\0';
-    memcpy(&clients[id].adresse, addr, sizeof(struct sockaddr_in));
-
-    printf("[CLIENT] %s connecté (ID: %d)\n", pseudo, id);
-}
-
-void deconnecter_client(int id)
-{
-    if (id < 0 || id >= NB_MAX_CLIENTS)
-        return;
-
-    printf("[CLIENT] %s déconnecté (ID: %d)\n", clients[id].pseudo, id);
-    clients[id].actif = 0;
-}
-
-/* ========================================================================
-   GESTION DES GROUPES
-   ======================================================================== */
-
-int trouver_groupe_par_nom(const char *nom)
-{
-    for (int i = 0; i < NB_MAX_GROUPES; i++)
-    {
-        if (groupes[i].actif && strcmp(groupes[i].nom, nom) == 0)
-            return i;
-    }
-    return -1;
-}
-
-int creer_groupe(const char *nom, int moderateur_id)
-{
-    // Vérifier si le nom existe déjà
-    if (trouver_groupe_par_nom(nom) >= 0)
-    {
-        printf("[GROUPE] Échec création '%s' : nom déjà existant\n", nom);
-        return -1;
+/* Create a new group */
+int creer_groupe(const char *nom, const char *moderateur) {
+    /* Check if group already exists */
+    if (trouver_groupe(nom) != -1) {
+        return -1;  /* Group already exists */
     }
 
-    // Trouver un slot libre
-    if (nb_groupes >= NB_MAX_GROUPES)
-    {
-        printf("[GROUPE] Échec création '%s' : limite atteinte\n", nom);
-        return -1;
-    }
-
-    int idx = -1;
-    for (int i = 0; i < NB_MAX_GROUPES; i++)
-    {
-        if (!groupes[i].actif)
-        {
-            idx = i;
+    /* Find free slot */
+    int index = -1;
+    for (int i = 0; i < MAX_GROUPES; i++) {
+        if (!groupes[i].actif) {
+            index = i;
             break;
         }
     }
 
-    if (idx < 0)
-        return -1;
+    if (index == -1 || nb_groupes >= config.max_groupes) {
+        return -2;  /* No free slots */
+    }
 
-    // Créer le groupe
-    groupes[idx].actif = 1;
-    strncpy(groupes[idx].nom, nom, TAILLE_NOM_GROUPE - 1);
-    groupes[idx].nom[TAILLE_NOM_GROUPE - 1] = '\0';
-    groupes[idx].moderateur_id = moderateur_id;
-    groupes[idx].nb_membres = 0;
+    /* Initialize group */
+    memset(&groupes[index], 0, sizeof(groupe_info));
+    strncpy(groupes[index].nom, nom, 49);
+    groupes[index].nom[49] = '\0';
+    strncpy(groupes[index].moderateur, moderateur, 19);
+    groupes[index].moderateur[19] = '\0';
+    groupes[index].num_groupe = index + 1;
+    groupes[index].port = PORT_GROUPE_BASE + index;
+    groupes[index].max_membres = MAX_MEMBRES_PAR_GROUPE;
+    groupes[index].nb_membres_actifs = 0;
+    groupes[index].nb_messages = 0;
+    groupes[index].actif = 1;
 
+    /* Create shared memory for this group */
+    int shm_id = creer_shm(sizeof(shm_groupe));
+    if (shm_id < 0) {
+        perror("Erreur: creation SHM pour groupe");
+        return -3;
+    }
+
+    /* Attach to shared memory */
+    shm_groupe *shm = (shm_groupe *)attacher_shm(shm_id);
+    if (shm == NULL) {
+        perror("Erreur: attachement SHM pour groupe");
+        supprimer_shm(shm_id);
+        return -3;
+    }
+
+    /* Create semaphore for synchronization */
+    int sem_id = creer_semaphore();
+    if (sem_id < 0) {
+        perror("Erreur: creation semaphore pour groupe");
+        detacher_shm(shm);
+        supprimer_shm(shm_id);
+        return -3;
+    }
+
+    /* Initialize shared memory */
+    memcpy(&shm->groupe, &groupes[index], sizeof(groupe_info));
+    shm->nb_membres = 0;
+    shm->shm_id = shm_id;
+    shm->sem_id = sem_id;
+
+    /* Store SHM and semaphore IDs in groupe structure */
+    groupes[index].shm_id = shm_id;
+    groupes[index].sem_id = sem_id;
+
+    /* Detach from shared memory (child will attach) */
+    detacher_shm(shm);
+
+    /* Fork GroupeISY process */
+    pid_t pid = fork();
+    if (pid < 0) {
+        perror("Erreur: fork pour GroupeISY");
+        supprimer_semaphore(sem_id);
+        supprimer_shm(shm_id);
+        return -3;
+    }
+
+    if (pid == 0) {
+        /* Child process - execute GroupeISY */
+        char port_str[10], nom_groupe[50], shm_id_str[20], sem_id_str[20];
+        snprintf(port_str, sizeof(port_str), "%d", groupes[index].port);
+        snprintf(nom_groupe, sizeof(nom_groupe), "%s", nom);
+        snprintf(shm_id_str, sizeof(shm_id_str), "%d", shm_id);
+        snprintf(sem_id_str, sizeof(sem_id_str), "%d", sem_id);
+
+        execl("./bin/GroupeISY", "GroupeISY", port_str, nom_groupe, moderateur, shm_id_str, sem_id_str, NULL);
+        
+        /* If execl fails */
+        perror("Erreur: execl GroupeISY");
+        exit(EXIT_FAILURE);
+    }
+
+    /* Parent process */
+    groupes[index].pid_groupe = pid;
     nb_groupes++;
-    printf("[GROUPE] Groupe '%s' créé (ID: %d, modérateur: %d)\n", nom, idx, moderateur_id);
 
-    return idx;
+    printf("Groupe %s cree (port %d, PID %d)\n", nom, groupes[index].port, pid);
+    return index;
 }
 
-int ajouter_membre_groupe(int groupe_id, int client_id)
-{
-    if (groupe_id < 0 || groupe_id >= NB_MAX_GROUPES || !groupes[groupe_id].actif)
-        return -1;
-
-    // Vérifier si déjà membre
-    for (int i = 0; i < groupes[groupe_id].nb_membres; i++)
-    {
-        if (groupes[groupe_id].membres[i] == client_id)
-        {
-            printf("[GROUPE] Client %d déjà dans '%s'\n", client_id, groupes[groupe_id].nom);
-            return 0; // Déjà membre, pas une erreur
-        }
+/* Delete a group */
+int supprimer_groupe(const char *nom, const char *demandeur) {
+    int index = trouver_groupe(nom);
+    if (index == -1) {
+        return -1;  /* Group not found */
     }
 
-    // Vérifier capacité
-    if (groupes[groupe_id].nb_membres >= NB_MAX_CLIENTS)
-    {
-        printf("[GROUPE] Groupe '%s' plein\n", groupes[groupe_id].nom);
-        return -1;
+    /* Check if requester is the moderator */
+    if (strcmp(groupes[index].moderateur, demandeur) != 0) {
+        return -2;  /* Not authorized */
     }
 
-    // Ajouter
-    groupes[groupe_id].membres[groupes[groupe_id].nb_membres] = client_id;
-    groupes[groupe_id].nb_membres++;
-
-    printf("[GROUPE] Client %d (%s) a rejoint '%s'\n",
-           client_id, clients[client_id].pseudo, groupes[groupe_id].nom);
-
-    return 1;
-}
-
-int retirer_membre_groupe(int groupe_id, int client_id)
-{
-    if (groupe_id < 0 || groupe_id >= NB_MAX_GROUPES || !groupes[groupe_id].actif)
-        return -1;
-
-    // Trouver et retirer
-    int trouve = 0;
-    for (int i = 0; i < groupes[groupe_id].nb_membres; i++)
-    {
-        if (groupes[groupe_id].membres[i] == client_id)
-        {
-            trouve = 1;
-            // Décaler les membres suivants
-            for (int j = i; j < groupes[groupe_id].nb_membres - 1; j++)
-            {
-                groupes[groupe_id].membres[j] = groupes[groupe_id].membres[j + 1];
-            }
-            groupes[groupe_id].membres[groupes[groupe_id].nb_membres - 1] = -1;
-            groupes[groupe_id].nb_membres--;
-            break;
-        }
+    /* Kill GroupeISY process */
+    if (groupes[index].pid_groupe > 0) {
+        kill(groupes[index].pid_groupe, SIGTERM);
+        waitpid(groupes[index].pid_groupe, NULL, 0);
     }
 
-    if (trouve)
-    {
-        printf("[GROUPE] Client %d a quitté '%s'\n", client_id, groupes[groupe_id].nom);
-        return 1;
+    /* Destroy shared memory and semaphore */
+    if (groupes[index].sem_id > 0) {
+        supprimer_semaphore(groupes[index].sem_id);
+    }
+    if (groupes[index].shm_id > 0) {
+        supprimer_shm(groupes[index].shm_id);
     }
 
+    /* Mark as inactive */
+    groupes[index].actif = 0;
+    nb_groupes--;
+
+    printf("Groupe %s supprime par %s\n", nom, demandeur);
     return 0;
 }
 
-/* ========================================================================
-   TRAITEMENT DES MESSAGES
-   ======================================================================== */
-
-void traiter_connexion(Message *msg, struct sockaddr_in *addr, int sockfd)
-{
-    int client_id = msg->id_client;
-
-    // Vérifier validité de l'ID
-    if (client_id < 0 || client_id >= NB_MAX_CLIENTS)
-    {
-        printf("[ERREUR] ID client invalide: %d\n", client_id);
-
-        Message reponse;
-        initialiser_message(&reponse);
-        reponse.type = MSG_ERREUR;
-        reponse.id_client = client_id;
-        snprintf(reponse.texte, TAILLE_TEXTE, "ID client invalide");
-
-        sendto(sockfd, &reponse, sizeof(reponse), 0,
-               (struct sockaddr *)addr, sizeof(*addr));
-        return;
-    }
-
-    // Si l'ID est déjà utilisé, déconnecter l'ancien client d'abord
-    if (clients[client_id].actif)
-    {
-        printf("[WARN] ID %d déjà utilisé par '%s', remplacement...\n",
-               client_id, clients[client_id].pseudo);
-
-        // Retirer l'ancien client de tous ses groupes
-        for (int i = 0; i < NB_MAX_GROUPES; i++)
-        {
-            if (groupes[i].actif)
-            {
-                retirer_membre_groupe(i, client_id);
-            }
-        }
-    }
-
-    // Vérifier unicité du pseudo (mais autoriser la reconnexion avec le même ID)
-    int pseudo_utilisateur_id = pseudo_existe(msg->pseudo);
-    if (pseudo_utilisateur_id >= 0 && pseudo_utilisateur_id != client_id)
-    {
-        printf("[ERREUR] Pseudo '%s' déjà utilisé par client %d\n", msg->pseudo, pseudo_utilisateur_id);
-
-        Message reponse;
-        initialiser_message(&reponse);
-        reponse.type = MSG_ERREUR;
-        reponse.id_client = client_id;
-        snprintf(reponse.texte, TAILLE_TEXTE, "Pseudo '%.20s' déjà utilisé", msg->pseudo);
-
-        sendto(sockfd, &reponse, sizeof(reponse), 0,
-               (struct sockaddr *)addr, sizeof(*addr));
-        return;
-    }
-
-    connecter_client(client_id, msg->pseudo, addr);
-
-    // Confirmer la connexion
-    Message reponse;
-    initialiser_message(&reponse);
-    reponse.type = MSG_CONNEXION;
-    reponse.id_client = client_id;
-    snprintf(reponse.texte, TAILLE_TEXTE, "Connexion acceptée");
-
-    sendto(sockfd, &reponse, sizeof(reponse), 0,
-           (struct sockaddr *)addr, sizeof(*addr));
-}
-
-void traiter_deconnexion(Message *msg)
-{
-    int client_id = msg->id_client;
-
-    if (client_id < 0 || client_id >= NB_MAX_CLIENTS)
-        return;
-
-    // Retirer le client de tous les groupes
-    for (int i = 0; i < NB_MAX_GROUPES; i++)
-    {
-        if (groupes[i].actif)
-        {
-            retirer_membre_groupe(i, client_id);
-        }
-    }
-
-    deconnecter_client(client_id);
-}
-
-void traiter_creation_groupe(Message *msg, struct sockaddr_in *addr, int sockfd)
-{
-    int groupe_id = creer_groupe(msg->texte, msg->id_client);
-
-    Message reponse;
-    initialiser_message(&reponse);
-    reponse.id_client = msg->id_client;
-
-    if (groupe_id >= 0)
-    {
-        reponse.type = MSG_CREER_GROUPE;
-        reponse.id_groupe = groupe_id;
-        snprintf(reponse.texte, TAILLE_TEXTE, "Groupe '%.30s' créé (ID: %d)",
-                 msg->texte, groupe_id);
-        printf("[REPONSE] Succès création groupe ID=%d\n", groupe_id);
-    }
-    else
-    {
-        // Vérifier si c'est parce que le nom existe déjà
-        if (trouver_groupe_par_nom(msg->texte) >= 0)
-        {
-            reponse.type = MSG_ERREUR;
-            reponse.id_groupe = -1;
-            snprintf(reponse.texte, TAILLE_TEXTE, "Groupe '%.30s' existe déjà", msg->texte);
-            printf("[REPONSE] Erreur: groupe existe déjà\n");
-        }
-        else
-        {
-            reponse.type = MSG_ERREUR;
-            reponse.id_groupe = -1;
-            snprintf(reponse.texte, TAILLE_TEXTE, "Échec création groupe (limite atteinte)");
-            printf("[REPONSE] Erreur: limite atteinte\n");
-        }
-    }
-
-    ssize_t sent = sendto(sockfd, &reponse, sizeof(reponse), 0,
-                          (struct sockaddr *)addr, sizeof(*addr));
-
-    if (sent < 0)
-    {
-        perror("[ERREUR] sendto() dans traiter_creation_groupe");
-    }
-}
-
-void traiter_liste_groupes(Message *msg, struct sockaddr_in *addr, int sockfd)
-{
-    Message reponse;
-    initialiser_message(&reponse);
-    reponse.type = MSG_LISTE_GROUPES;
-    reponse.id_client = msg->id_client;
-
-    char liste[TAILLE_TEXTE] = {0};
+/* List all groups */
+void lister_groupes(struct_message *reponse) {
+    char liste[100] = "";
     int count = 0;
 
-    for (int i = 0; i < NB_MAX_GROUPES; i++)
-    {
-        if (groupes[i].actif)
-        {
-            char ligne[64];
-            snprintf(ligne, sizeof(ligne), "[%d] %s (%d membres)\n",
-                     i, groupes[i].nom, groupes[i].nb_membres);
+    for (int i = 0; i < MAX_GROUPES && count < nb_groupes; i++) {
+        if (groupes[i].actif) {
+            if (count > 0) strcat(liste, ",");
+            strncat(liste, groupes[i].nom, 99 - strlen(liste));
+            count++;
+        }
+    }
 
-            if (strlen(liste) + strlen(ligne) < TAILLE_TEXTE - 1)
-            {
-                strcat(liste, ligne);
-                count++;
+    if (count == 0) {
+        strcpy(liste, "Aucun groupe");
+    }
+
+    initialiser_message(reponse, ORDRE_INF, "Serveur", liste);
+}
+
+/* Get group connection information */
+int info_connexion_groupe(const char *nom, struct_message *reponse) {
+    int index = trouver_groupe(nom);
+    if (index == -1) {
+        return -1;
+    }
+
+    char info[100];
+    snprintf(info, sizeof(info), "%d", groupes[index].port);
+    initialiser_message(reponse, ORDRE_INF, "Serveur", info);
+    
+    groupes[index].nb_membres_actifs++;
+    return 0;
+}
+
+/* Process incoming messages */
+void traiter_message(struct_message *msg, struct sockaddr_in *client_addr) {
+    struct_message reponse;
+    char client_ip[INET_ADDRSTRLEN];
+    inet_ntop(AF_INET, &(client_addr->sin_addr), client_ip, INET_ADDRSTRLEN);
+    int client_port = ntohs(client_addr->sin_port);
+
+    printf("%s : Reception d'une demande %s\n", msg->Emetteur, msg->Ordre);
+
+    if (strcmp(msg->Ordre, ORDRE_CRG) == 0) {
+        /* Create group */
+        int result = creer_groupe(msg->Texte, msg->Emetteur);
+        if (result >= 0) {
+            initialiser_message(&reponse, ORDRE_ACK, "Serveur", "Groupe cree");
+            printf("Groupe %s cree par %s\n", msg->Texte, msg->Emetteur);
+        } else {
+            initialiser_message(&reponse, ORDRE_ERR, "Serveur", 
+                result == -1 ? "Groupe existe deja" : "Impossible de creer le groupe");
+        }
+        envoyer_message(sockfd_serveur, &reponse, client_ip, client_port);
+
+    } else if (strcmp(msg->Ordre, ORDRE_SUG) == 0) {
+        /* Delete group */
+        int result = supprimer_groupe(msg->Texte, msg->Emetteur);
+        if (result == 0) {
+            initialiser_message(&reponse, ORDRE_ACK, "Serveur", "Groupe supprime");
+        } else {
+            initialiser_message(&reponse, ORDRE_ERR, "Serveur",
+                result == -1 ? "Groupe inexistant" : "Non autorise");
+        }
+        envoyer_message(sockfd_serveur, &reponse, client_ip, client_port);
+
+    } else if (strcmp(msg->Ordre, ORDRE_LSG) == 0) {
+        /* List groups */
+        lister_groupes(&reponse);
+        printf("Envoi %s : liste des groupes de discussions\n", msg->Emetteur);
+        envoyer_message(sockfd_serveur, &reponse, client_ip, client_port);
+
+    } else if (strcmp(msg->Ordre, ORDRE_JOG) == 0) {
+        /* Join group */
+        if (info_connexion_groupe(msg->Texte, &reponse) == 0) {
+            printf("%s : Reception d'une demande de connexion au groupe de discussion %s\n",
+                   msg->Emetteur, msg->Texte);
+            printf("Envoi %s : Informations de connexion au groupe\n", msg->Emetteur);
+        } else {
+            initialiser_message(&reponse, ORDRE_ERR, "Serveur", "Groupe inexistant");
+        }
+        envoyer_message(sockfd_serveur, &reponse, client_ip, client_port);
+
+    } else if (strcmp(msg->Ordre, ORDRE_CON) == 0) {
+        /* Connection */
+        initialiser_message(&reponse, ORDRE_ACK, "Serveur", "Connexion acceptee");
+        envoyer_message(sockfd_serveur, &reponse, client_ip, client_port);
+        printf("%s connecte\n", msg->Emetteur);
+
+    } else if (strcmp(msg->Ordre, ORDRE_DEC) == 0) {
+        /* Disconnection */
+        printf("%s deconnecte\n", msg->Emetteur);
+
+    } else {
+        /* Unknown command */
+        initialiser_message(&reponse, ORDRE_ERR, "Serveur", "Commande inconnue");
+        envoyer_message(sockfd_serveur, &reponse, client_ip, client_port);
+    }
+}
+
+/* Main function */
+int main(int argc, char *argv[]) {
+    struct_message msg;
+    struct sockaddr_in client_addr;
+
+    printf("=== ServeurISY - Serveur de messagerie instantanee ===\n\n");
+
+    /* Install signal handler */
+    signal(SIGINT, gestionnaire_signal);
+    signal(SIGCHLD, SIG_IGN);  /* Avoid zombie processes */
+
+    /* Read configuration */
+    if (argc > 1) {
+        lire_config_serveur(argv[1], &config);
+    } else {
+        lire_config_serveur("conf/serveur.conf", &config);
+    }
+    printf("Lecture du fichier de configuration OK\n");
+    printf("IP: %s, Port: %d\n\n", config.ip_serveur, config.port_serveur);
+
+    /* Initialize groups array */
+    memset(groupes, 0, sizeof(groupes));
+
+    /* Create and bind socket */
+    sockfd_serveur = creer_socket_udp();
+    lier_socket(sockfd_serveur, config.ip_serveur, config.port_serveur);
+
+    printf("Serveur en ecoute sur %s:%d\n\n", config.ip_serveur, config.port_serveur);
+
+    /* Main loop */
+    while (serveur_actif) {
+        if (recevoir_message(sockfd_serveur, &msg, &client_addr) > 0) {
+            traiter_message(&msg, &client_addr);
+        }
+    }
+
+    /* Cleanup: terminate all groups */
+    printf("\nArret de tous les groupes de discussion...\n");
+    for (int i = 0; i < MAX_GROUPES; i++) {
+        if (groupes[i].actif && groupes[i].pid_groupe > 0) {
+            printf("Arret du groupe %s...\n", groupes[i].nom);
+            kill(groupes[i].pid_groupe, SIGTERM);
+        }
+    }
+
+    /* Wait for all children */
+    printf("Attente de la terminaison des processus groupes...\n");
+    for (int i = 0; i < MAX_GROUPES; i++) {
+        if (groupes[i].actif && groupes[i].pid_groupe > 0) {
+            waitpid(groupes[i].pid_groupe, NULL, 0);
+        }
+    }
+
+    /* Cleanup shared memory and semaphores */
+    printf("Nettoyage des ressources partagees...\n");
+    for (int i = 0; i < MAX_GROUPES; i++) {
+        if (groupes[i].actif) {
+            if (groupes[i].sem_id > 0) {
+                supprimer_semaphore(groupes[i].sem_id);
+            }
+            if (groupes[i].shm_id > 0) {
+                supprimer_shm(groupes[i].shm_id);
             }
         }
     }
 
-    if (count == 0)
-    {
-        snprintf(reponse.texte, TAILLE_TEXTE, "Aucun groupe disponible");
-    }
-    else
-    {
-        snprintf(reponse.texte, TAILLE_TEXTE, "Groupes (%d):\n%.230s", count, liste);
-    }
+    close(sockfd_serveur);
+    printf("\nServeur arrete proprement\n");
 
-    sendto(sockfd, &reponse, sizeof(reponse), 0,
-           (struct sockaddr *)addr, sizeof(*addr));
-}
-
-void traiter_rejoindre_groupe(Message *msg, struct sockaddr_in *addr, int sockfd)
-{
-    int groupe_id = trouver_groupe_par_nom(msg->texte);
-
-    Message reponse;
-    initialiser_message(&reponse);
-    reponse.type = MSG_REJOINDRE_GROUPE;
-    reponse.id_client = msg->id_client;
-
-    if (groupe_id >= 0)
-    {
-        int resultat = ajouter_membre_groupe(groupe_id, msg->id_client);
-        if (resultat > 0)
-        {
-            reponse.id_groupe = groupe_id;
-            snprintf(reponse.texte, TAILLE_TEXTE, "Vous avez rejoint '%.30s'", msg->texte);
-        }
-        else
-        {
-            reponse.id_groupe = -1;
-            snprintf(reponse.texte, TAILLE_TEXTE, "Impossible de rejoindre '%.30s'", msg->texte);
-        }
-    }
-    else
-    {
-        reponse.id_groupe = -1;
-        snprintf(reponse.texte, TAILLE_TEXTE, "Groupe '%.30s' introuvable", msg->texte);
-    }
-
-    sendto(sockfd, &reponse, sizeof(reponse), 0,
-           (struct sockaddr *)addr, sizeof(*addr));
-}
-
-void traiter_quitter_groupe(Message *msg, struct sockaddr_in *addr, int sockfd)
-{
-    int groupe_id = msg->id_groupe;
-
-    Message reponse;
-    initialiser_message(&reponse);
-    reponse.type = MSG_QUITTER_GROUPE;
-    reponse.id_client = msg->id_client;
-
-    if (groupe_id >= 0 && groupe_id < NB_MAX_GROUPES && groupes[groupe_id].actif)
-    {
-        int resultat = retirer_membre_groupe(groupe_id, msg->id_client);
-        if (resultat > 0)
-        {
-            reponse.id_groupe = groupe_id;
-            snprintf(reponse.texte, TAILLE_TEXTE, "Vous avez quitté '%.30s'",
-                     groupes[groupe_id].nom);
-        }
-        else
-        {
-            reponse.id_groupe = -1;
-            snprintf(reponse.texte, TAILLE_TEXTE, "Vous n'étiez pas dans ce groupe");
-        }
-    }
-    else
-    {
-        reponse.id_groupe = -1;
-        snprintf(reponse.texte, TAILLE_TEXTE, "Groupe invalide");
-    }
-
-    sendto(sockfd, &reponse, sizeof(reponse), 0,
-           (struct sockaddr *)addr, sizeof(*addr));
-}
-
-void traiter_message_groupe(Message *msg, int sockfd)
-{
-    int groupe_id = msg->id_groupe;
-
-    if (groupe_id < 0 || groupe_id >= NB_MAX_GROUPES || !groupes[groupe_id].actif)
-    {
-        printf("[ERREUR] Message pour groupe invalide: %d\n", groupe_id);
-        return;
-    }
-
-    printf("[MESSAGE] %s dans '%s': %s\n",
-           msg->pseudo, groupes[groupe_id].nom, msg->texte);
-
-    // Broadcast à tous les membres du groupe
-    Message diffusion;
-    memcpy(&diffusion, msg, sizeof(Message));
-    diffusion.type = MSG_MESSAGE_GROUPE;
-
-    for (int i = 0; i < groupes[groupe_id].nb_membres; i++)
-    {
-        int membre_id = groupes[groupe_id].membres[i];
-        if (membre_id >= 0 && membre_id < NB_MAX_CLIENTS && clients[membre_id].actif)
-        {
-            sendto(sockfd, &diffusion, sizeof(diffusion), 0,
-                   (struct sockaddr *)&clients[membre_id].adresse,
-                   sizeof(clients[membre_id].adresse));
-        }
-    }
-}
-
-/* ========================================================================
-   FONCTION PRINCIPALE
-   ======================================================================== */
-
-int main(void)
-{
-    printf("╔════════════════════════════════════════╗\n");
-    printf("║     SERVEUR ISY - PHASE 2              ║\n");
-    printf("║     Gestion des groupes (CRUD)         ║\n");
-    printf("╚════════════════════════════════════════╝\n\n");
-
-    // Initialisation
-    initialiser_clients();
-    initialiser_groupes();
-    signal(SIGINT, gestionnaire_sigint);
-
-    // Socket UDP
-    int sockfd = creer_socket_udp();
-    struct sockaddr_in adresse_serveur;
-    initialiser_adresse(&adresse_serveur, IP_SERVEUR, PORT_SERVEUR);
-
-    if (bind(sockfd, (struct sockaddr *)&adresse_serveur, sizeof(adresse_serveur)) < 0)
-    {
-        close(sockfd);
-        erreur_fatale("Erreur bind()");
-    }
-
-    printf("[OK] Serveur en écoute sur %s:%d\n", IP_SERVEUR, PORT_SERVEUR);
-    printf("[INFO] Capacité : %d clients, %d groupes\n", NB_MAX_CLIENTS, NB_MAX_GROUPES);
-    printf("[INFO] Appuyez sur Ctrl+C pour arrêter\n");
-    printf("─────────────────────────────────────────\n\n");
-
-    // Boucle principale
-    Message msg_recu;
-    struct sockaddr_in adresse_client;
-    socklen_t taille_adresse = sizeof(adresse_client);
-
-    while (serveur_actif)
-    {
-        memset(&msg_recu, 0, sizeof(msg_recu));
-
-        ssize_t nb_octets = recvfrom(sockfd, &msg_recu, sizeof(msg_recu), 0,
-                                     (struct sockaddr *)&adresse_client, &taille_adresse);
-
-        if (nb_octets < 0)
-        {
-            if (serveur_actif)
-                perror("[ERREUR] recvfrom()");
-            continue;
-        }
-
-        // Traitement selon le type de message
-        switch (msg_recu.type)
-        {
-        case MSG_CONNEXION:
-            traiter_connexion(&msg_recu, &adresse_client, sockfd);
-            break;
-
-        case MSG_DECONNEXION:
-            traiter_deconnexion(&msg_recu);
-            break;
-
-        case MSG_CREER_GROUPE:
-            traiter_creation_groupe(&msg_recu, &adresse_client, sockfd);
-            break;
-
-        case MSG_LISTE_GROUPES:
-            traiter_liste_groupes(&msg_recu, &adresse_client, sockfd);
-            break;
-
-        case MSG_REJOINDRE_GROUPE:
-            traiter_rejoindre_groupe(&msg_recu, &adresse_client, sockfd);
-            break;
-
-        case MSG_QUITTER_GROUPE:
-            traiter_quitter_groupe(&msg_recu, &adresse_client, sockfd);
-            break;
-
-        case MSG_ENVOI_MESSAGE:
-            traiter_message_groupe(&msg_recu, sockfd);
-            break;
-
-        default:
-            printf("[WARN] Type de message inconnu: %d\n", msg_recu.type);
-        }
-    }
-
-    // Fermeture propre
-    close(sockfd);
-    printf("\n[OK] Serveur arrêté proprement\n");
-    printf("[INFO] Groupes créés: %d\n", nb_groupes);
-
-    return EXIT_SUCCESS;
+    return 0;
 }

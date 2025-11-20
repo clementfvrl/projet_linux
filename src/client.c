@@ -1,564 +1,523 @@
-#include "commun.h"
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <unistd.h>
-#include <fcntl.h>
-#include <sys/socket.h>
-#include <sys/select.h>
+#include "../include/commun.h"
+#include "../include/crypto.h"
+#include <sys/wait.h>
 #include <sys/time.h>
-#include <netinet/in.h>
-#include <arpa/inet.h>
 
-/* ========================================================================
-   VARIABLES GLOBALES
-   ======================================================================== */
+/* Global variables */
+volatile sig_atomic_t client_actif = 1;
+int sockfd_client;
+config_client config;
+char cle_crypto[32] = "ISY_CLE_GROUPE_2025";
 
-static int sockfd = -1;
-static struct sockaddr_in adresse_serveur;
-static int id_client_local = 0;
-static char pseudo_utilisateur[TAILLE_PSEUDO] = {0};
-static int groupe_actuel = ID_GROUPE_AUCUN;             // Groupe actuellement rejoint
-static char nom_groupe_actuel[TAILLE_NOM_GROUPE] = {0}; // Nom du groupe actuel
+typedef struct {
+    char nom[50];
+    int port;
+    pid_t pid_affichage;
+    int actif;
+    int shm_id;
+    int sem_id;
+    shm_affichage *shm;
+} groupe_rejoint;
 
-/* ========================================================================
-   AFFICHAGE DU MENU
-   ======================================================================== */
+groupe_rejoint groupes_rejoints[10];
+int nb_groupes_rejoints = 0;
 
-void afficher_menu(void)
-{
-    printf("\n╔════════════════════════════════════════╗\n");
-    printf("║       CLIENT ISY - Menu Principal      ║\n");
-    printf("╠════════════════════════════════════════╣\n");
-
-    if (pseudo_utilisateur[0] == '\0')
-    {
-        printf("║ ⚠  Vous devez vous connecter d'abord   ║\n");
-        printf("╠════════════════════════════════════════╣\n");
-    }
-    else
-    {
-        printf("║ 👤 Connecté : %-24s ║\n", pseudo_utilisateur);
-        if (groupe_actuel >= 0 && nom_groupe_actuel[0] != '\0')
-        {
-            printf("║ 📁 Groupe : %-26s ║\n", nom_groupe_actuel);
-        }
-        printf("╠════════════════════════════════════════╣\n");
-    }
-
-    printf("║ 1. Se connecter                        ║\n");
-    printf("║ 2. Créer un groupe                     ║\n");
-    printf("║ 3. Lister les groupes                  ║\n");
-    printf("║ 4. Rejoindre un groupe                 ║\n");
-    printf("║ 5. Quitter un groupe                   ║\n");
-    printf("║ 6. Envoyer un message au groupe        ║\n");
-    printf("║ 7. Se déconnecter                      ║\n");
-    printf("║ 8. Quitter                             ║\n");
-    printf("╚════════════════════════════════════════╝\n");
-    printf("Choix : ");
-}
-
-void vider_buffer_udp(void)
-{
-    Message dummy;
-    struct sockaddr_in from;
-    socklen_t fromlen = sizeof(from);
-
-    // Mettre le socket en mode non-bloquant temporairement
-    int flags = fcntl(sockfd, F_GETFL, 0);
-    fcntl(sockfd, F_SETFL, flags | O_NONBLOCK);
-
-    int count = 0;
-    // Vider tous les paquets en attente
-    while (recvfrom(sockfd, &dummy, sizeof(dummy), 0,
-                    (struct sockaddr *)&from, &fromlen) > 0)
-    {
-        count++;
-    }
-
-    // Remettre en mode bloquant
-    fcntl(sockfd, F_SETFL, flags);
-
-    if (count > 0)
-    {
-        printf("[DEBUG] %d ancien(s) message(s) vidé(s) du buffer\n", count);
+/* Signal handler */
+void gestionnaire_signal(int sig) {
+    if (sig == SIGINT) {
+        printf("\n\nReception signal SIGINT, arret du client...\n");
+        client_actif = 0;
     }
 }
 
-/* ========================================================================
-   RÉCEPTION DE RÉPONSES DU SERVEUR
-   ======================================================================== */
+/* Send message to server and wait for response */
+int envoyer_et_recevoir(struct_message *envoi, struct_message *reponse) {
+    struct sockaddr_in addr;
+    
+    if (envoyer_message(sockfd_client, envoi, config.ip_serveur, config.port_serveur) < 0) {
+        return -1;
+    }
 
-int recevoir_reponse(Message *reponse, int timeout_sec)
-{
-    fd_set readfds;
+    /* Set timeout for receive */
     struct timeval tv;
-
-    FD_ZERO(&readfds);
-    FD_SET(sockfd, &readfds);
-
-    tv.tv_sec = timeout_sec;
+    tv.tv_sec = 5;
     tv.tv_usec = 0;
+    setsockopt(sockfd_client, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
 
-    int ret = select(sockfd + 1, &readfds, NULL, NULL, &tv);
+    int ret = recevoir_message(sockfd_client, reponse, &addr);
+    
+    /* Remove timeout */
+    tv.tv_sec = 0;
+    tv.tv_usec = 0;
+    setsockopt(sockfd_client, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
 
-    if (ret < 0)
-    {
-        perror("[ERREUR] select()");
-        return -1;
-    }
-    else if (ret == 0)
-    {
-        printf("[TIMEOUT] Pas de réponse du serveur\n");
-        return 0;
-    }
-
-    struct sockaddr_in from;
-    socklen_t fromlen = sizeof(from);
-
-    ssize_t nb = recvfrom(sockfd, reponse, sizeof(*reponse), 0,
-                          (struct sockaddr *)&from, &fromlen);
-
-    if (nb < 0)
-    {
-        perror("[ERREUR] recvfrom()");
-        return -1;
-    }
-
-    return 1;
+    return ret;
 }
 
-/* ========================================================================
-   CONNEXION AU SERVEUR
-   ======================================================================== */
+/* Create a group */
+void creer_groupe_cmd() {
+    struct_message msg, reponse;
+    char nom_groupe[50];
 
-void se_connecter(void)
-{
-    if (pseudo_utilisateur[0] != '\0')
-    {
-        printf("[INFO] Déjà connecté en tant que '%s'\n", pseudo_utilisateur);
-        return;
-    }
+    printf("Saisir le nom du groupe\n");
+    if (fgets(nom_groupe, sizeof(nom_groupe), stdin) != NULL) {
+        nom_groupe[strcspn(nom_groupe, "\n")] = '\0';
 
-    Message msg;
-    initialiser_message(&msg);
-
-    msg.type = MSG_CONNEXION;
-    msg.id_client = id_client_local;
-    msg.id_groupe = ID_GROUPE_AUCUN;
-
-    printf("\nEntrez votre pseudo : ");
-    if (fgets(msg.pseudo, TAILLE_PSEUDO, stdin) == NULL)
-    {
-        printf("[ERREUR] Lecture pseudo échouée\n");
-        return;
-    }
-    supprimer_retour_ligne(msg.pseudo);
-
-    if (strlen(msg.pseudo) == 0)
-    {
-        printf("[ERREUR] Pseudo vide\n");
-        return;
-    }
-
-    snprintf(msg.texte, TAILLE_TEXTE, "Demande de connexion");
-
-    printf("[ENVOI] Connexion au serveur...\n");
-
-    if (sendto(sockfd, &msg, sizeof(msg), 0,
-               (struct sockaddr *)&adresse_serveur, sizeof(adresse_serveur)) < 0)
-    {
-        perror("[ERREUR] sendto()");
-        return;
-    }
-
-    // IMPORTANT : Vider le buffer UDP avant d'attendre la réponse
-    vider_buffer_udp();
-
-    // Attendre réponse
-    Message reponse;
-    int resultat = recevoir_reponse(&reponse, 5);
-
-    if (resultat > 0)
-    {
-        if (reponse.type == MSG_CONNEXION)
-        {
-            strncpy(pseudo_utilisateur, msg.pseudo, TAILLE_PSEUDO - 1);
-            pseudo_utilisateur[TAILLE_PSEUDO - 1] = '\0';
-            printf("[OK] %s\n", reponse.texte);
+        if (strlen(nom_groupe) == 0) {
+            printf("Erreur: nom de groupe vide\n");
+            return;
         }
-        else if (reponse.type == MSG_ERREUR)
-        {
-            printf("[ERREUR] %s\n", reponse.texte);
+
+        initialiser_message(&msg, ORDRE_CRG, config.nom_utilisateur, nom_groupe);
+        printf("Envoi de la demande au serveur\n");
+
+        if (envoyer_et_recevoir(&msg, &reponse) > 0) {
+            if (strcmp(reponse.Ordre, ORDRE_ACK) == 0) {
+                printf("Groupe cree !\n");
+            } else {
+                printf("Erreur: %s\n", reponse.Texte);
+            }
+        } else {
+            printf("Erreur: pas de reponse du serveur\n");
         }
-        else
-        {
-            printf("[WARN] Type de réponse inattendu: %d\n", reponse.type);
-        }
-    }
-    else if (resultat == 0)
-    {
-        printf("[ERREUR] Timeout - pas de réponse du serveur\n");
-    }
-    else
-    {
-        printf("[ERREUR] Erreur lors de la réception\n");
     }
 }
 
-/* ========================================================================
-   CRÉATION DE GROUPE
-   ======================================================================== */
+/* List groups */
+void lister_groupes_cmd() {
+    struct_message msg, reponse;
 
-void creer_groupe(void)
-{
-    if (pseudo_utilisateur[0] == '\0')
-    {
-        printf("[ERREUR] Connectez-vous d'abord (option 1)\n");
-        return;
+    initialiser_message(&msg, ORDRE_LSG, config.nom_utilisateur, "");
+
+    if (envoyer_et_recevoir(&msg, &reponse) > 0) {
+        printf("Groupes disponibles : %s\n", reponse.Texte);
+    } else {
+        printf("Erreur: pas de reponse du serveur\n");
     }
+}
 
-    Message msg;
-    initialiser_message(&msg);
+/* Join a group */
+void rejoindre_groupe_cmd() {
+    struct_message msg, reponse;
+    char nom_groupe[50];
 
-    msg.type = MSG_CREER_GROUPE;
-    msg.id_client = id_client_local;
-    msg.id_groupe = ID_GROUPE_AUCUN;
-    strncpy(msg.pseudo, pseudo_utilisateur, TAILLE_PSEUDO - 1);
+    printf("Saisir le nom du groupe\n");
+    if (fgets(nom_groupe, sizeof(nom_groupe), stdin) != NULL) {
+        nom_groupe[strcspn(nom_groupe, "\n")] = '\0';
 
-    printf("\nNom du groupe à créer : ");
-    if (fgets(msg.texte, TAILLE_TEXTE, stdin) == NULL)
-    {
-        printf("[ERREUR] Lecture nom échouée\n");
-        return;
-    }
-    supprimer_retour_ligne(msg.texte);
+        if (strlen(nom_groupe) == 0) {
+            printf("Erreur: nom de groupe vide\n");
+            return;
+        }
 
-    if (strlen(msg.texte) == 0)
-    {
-        printf("[ERREUR] Nom de groupe vide\n");
-        return;
-    }
-
-    printf("[ENVOI] Création du groupe '%s'...\n", msg.texte);
-
-    if (sendto(sockfd, &msg, sizeof(msg), 0,
-               (struct sockaddr *)&adresse_serveur, sizeof(adresse_serveur)) < 0)
-    {
-        perror("[ERREUR] sendto()");
-        return;
-    }
-
-    // Attendre réponse
-    Message reponse;
-    if (recevoir_reponse(&reponse, 2) > 0)
-    {
-        if (reponse.type == MSG_CREER_GROUPE)
-        {
-            printf("[SERVEUR] %s\n", reponse.texte);
-            if (reponse.id_groupe >= 0)
-            {
-                printf("[INFO] Groupe ID: %d\n", reponse.id_groupe);
+        /* Check if already joined */
+        for (int i = 0; i < nb_groupes_rejoints; i++) {
+            if (groupes_rejoints[i].actif &&
+                strcmp(groupes_rejoints[i].nom, nom_groupe) == 0) {
+                printf("Vous avez deja rejoint ce groupe\n");
+                return;
             }
         }
-        else if (reponse.type == MSG_ERREUR)
-        {
-            printf("[ERREUR] %s\n", reponse.texte);
+
+        /* Request group info */
+        initialiser_message(&msg, ORDRE_JOG, config.nom_utilisateur, nom_groupe);
+
+        if (envoyer_et_recevoir(&msg, &reponse) > 0) {
+            if (strcmp(reponse.Ordre, ORDRE_ERR) == 0) {
+                printf("Erreur: %s\n", reponse.Texte);
+                return;
+            }
+
+            int port_groupe = atoi(reponse.Texte);
+            printf("Connexion au groupe %s realisee, lancement de l'affichage\n", nom_groupe);
+
+            /* Create shared memory for AffichageISY */
+            int shm_id = creer_shm(sizeof(shm_affichage));
+            if (shm_id < 0) {
+                perror("Erreur: creation SHM pour affichage");
+                return;
+            }
+
+            /* Attach to shared memory */
+            shm_affichage *shm = (shm_affichage *)attacher_shm(shm_id);
+            if (shm == NULL) {
+                perror("Erreur: attachement SHM pour affichage");
+                supprimer_shm(shm_id);
+                return;
+            }
+
+            /* Create semaphore for synchronization */
+            int sem_id = creer_semaphore();
+            if (sem_id < 0) {
+                perror("Erreur: creation semaphore pour affichage");
+                detacher_shm(shm);
+                supprimer_shm(shm_id);
+                return;
+            }
+
+            /* Initialize shared memory */
+            shm->nb_messages = 0;
+            shm->actif = 1;
+            shm->shm_id = shm_id;
+            shm->sem_id = sem_id;
+
+            /* Fork AffichageISY process */
+            pid_t pid = fork();
+            if (pid < 0) {
+                perror("Erreur: fork pour AffichageISY");
+                supprimer_semaphore(sem_id);
+                detacher_shm(shm);
+                supprimer_shm(shm_id);
+                return;
+            }
+
+            if (pid == 0) {
+                /* Child process */
+                char port_str[10], nom_str[50], shm_id_str[20], sem_id_str[20];
+                snprintf(port_str, sizeof(port_str), "%d", port_groupe);
+                snprintf(nom_str, sizeof(nom_str), "%s", nom_groupe);
+                snprintf(shm_id_str, sizeof(shm_id_str), "%d", shm_id);
+                snprintf(sem_id_str, sizeof(sem_id_str), "%d", sem_id);
+
+                execl("./bin/AffichageISY", "AffichageISY", nom_str,
+                      config.nom_utilisateur, shm_id_str, sem_id_str, NULL);
+
+                perror("Erreur: execl AffichageISY");
+                exit(EXIT_FAILURE);
+            }
+
+            /* Parent process - save group info */
+            if (nb_groupes_rejoints < 10) {
+                strncpy(groupes_rejoints[nb_groupes_rejoints].nom, nom_groupe, 49);
+                groupes_rejoints[nb_groupes_rejoints].port = port_groupe;
+                groupes_rejoints[nb_groupes_rejoints].pid_affichage = pid;
+                groupes_rejoints[nb_groupes_rejoints].actif = 1;
+                groupes_rejoints[nb_groupes_rejoints].shm_id = shm_id;
+                groupes_rejoints[nb_groupes_rejoints].sem_id = sem_id;
+                groupes_rejoints[nb_groupes_rejoints].shm = shm;
+                nb_groupes_rejoints++;
+            }
+
+            /* Join the group via UDP - send to group port on server */
+            struct_message join_msg;
+            initialiser_message(&join_msg, ORDRE_JOG, config.nom_utilisateur, "");
+            envoyer_message(sockfd_client, &join_msg, "127.0.0.1", port_groupe);
         }
     }
 }
 
-/* ========================================================================
-   LISTER LES GROUPES
-   ======================================================================== */
+/* Dialog on a group */
+void dialoguer_groupe_cmd() {
+    struct_message msg;
+    char nom_groupe[50];
+    char ligne[200];
 
-void lister_groupes(void)
-{
-    Message msg;
-    initialiser_message(&msg);
+    printf("Saisir le nom du groupe\n");
+    if (fgets(nom_groupe, sizeof(nom_groupe), stdin) != NULL) {
+        nom_groupe[strcspn(nom_groupe, "\n")] = '\0';
 
-    msg.type = MSG_LISTE_GROUPES;
-    msg.id_client = id_client_local;
-
-    if (sendto(sockfd, &msg, sizeof(msg), 0,
-               (struct sockaddr *)&adresse_serveur, sizeof(adresse_serveur)) < 0)
-    {
-        perror("[ERREUR] sendto()");
-        return;
-    }
-
-    // Attendre réponse
-    Message reponse;
-    if (recevoir_reponse(&reponse, 2) > 0)
-    {
-        if (reponse.type == MSG_LISTE_GROUPES)
-        {
-            printf("\n╔════════════════════════════════════════╗\n");
-            printf("║          GROUPES DISPONIBLES           ║\n");
-            printf("╚════════════════════════════════════════╝\n");
-            printf("%s\n", reponse.texte);
+        /* Find joined group */
+        int index = -1;
+        for (int i = 0; i < nb_groupes_rejoints; i++) {
+            if (groupes_rejoints[i].actif && 
+                strcmp(groupes_rejoints[i].nom, nom_groupe) == 0) {
+                index = i;
+                break;
+            }
         }
+
+        if (index == -1) {
+            printf("Erreur: vous n'avez pas rejoint ce groupe\n");
+            return;
+        }
+
+        printf("Tapez 'quit' pour revenir au menu, 'cmd' pour entrer une commande, 'msg' pour revenir aux messages\n");
+        printf("Les messages des autres membres s'afficheront automatiquement\n\n");
+
+        int mode_message = 1;
+        fd_set readfds;
+        struct timeval timeout;
+        int show_prompt = 1;
+
+        while (1) {
+            /* Display prompt only when needed */
+            if (show_prompt) {
+                if (mode_message) {
+                    printf("Message : ");
+                } else {
+                    printf("Commande : ");
+                }
+                fflush(stdout);
+                show_prompt = 0;
+            }
+
+            /* Use select to monitor both stdin and socket */
+            FD_ZERO(&readfds);
+            FD_SET(STDIN_FILENO, &readfds);
+            FD_SET(sockfd_client, &readfds);
+
+            timeout.tv_sec = 1;
+            timeout.tv_usec = 0;
+
+            int activity = select(sockfd_client + 1, &readfds, NULL, NULL, &timeout);
+
+            /* Check for incoming messages from group */
+            if (activity > 0 && FD_ISSET(sockfd_client, &readfds)) {
+                struct_message incoming_msg;
+                struct sockaddr_in incoming_addr;
+                if (recevoir_message(sockfd_client, &incoming_msg, &incoming_addr) > 0) {
+                    /* Write message to shared memory for AffichageISY to display */
+                    shm_affichage *shm = groupes_rejoints[index].shm;
+                    if (shm != NULL && groupes_rejoints[index].sem_id >= 0) {
+                        P(groupes_rejoints[index].sem_id);
+                        if (shm->nb_messages >= 100) {
+                            /* Buffer full - shift all messages left and add new one at the end */
+                            memmove(&shm->messages[0], &shm->messages[1],
+                                    sizeof(struct_message) * 99);
+                            memcpy(&shm->messages[99], &incoming_msg, sizeof(struct_message));
+                        } else {
+                            /* Normal case - add to end */
+                            memcpy(&shm->messages[shm->nb_messages], &incoming_msg, sizeof(struct_message));
+                            shm->nb_messages++;
+                        }
+                        V(groupes_rejoints[index].sem_id);
+                    }
+
+                    /* Handle error messages that require breaking the loop */
+                    if (strcmp(incoming_msg.Ordre, ORDRE_ERR) == 0) {
+                        if (strstr(incoming_msg.Texte, "banni") != NULL ||
+                            strstr(incoming_msg.Texte, "exclu") != NULL) {
+                            printf("\r\033[K");  /* Clear current line */
+                            printf("Vous avez ete exclu du groupe. Retour au menu.\n");
+                            break;
+                        }
+                    }
+                    show_prompt = 1;  /* Show prompt again after message */
+                }
+                continue;
+            }
+
+            /* Check for user input */
+            if (activity > 0 && FD_ISSET(STDIN_FILENO, &readfds)) {
+                if (fgets(ligne, sizeof(ligne), stdin) == NULL) {
+                    break;
+                }
+                show_prompt = 1;  /* Show prompt for next input */
+
+                ligne[strcspn(ligne, "\n")] = '\0';
+
+                if (strcmp(ligne, "quit") == 0) {
+                    break;
+                } else if (strcmp(ligne, "cmd") == 0) {
+                    mode_message = 0;
+                    continue;
+                } else if (strcmp(ligne, "msg") == 0) {
+                    mode_message = 1;
+                    continue;
+                }
+
+                if (strlen(ligne) == 0) {
+                    continue;
+                }
+
+            if (mode_message) {
+                /* Send message */
+                char texte_crypte[100];
+                strncpy(texte_crypte, ligne, 99);
+                texte_crypte[99] = '\0';
+                crypter_message(texte_crypte, 100, cle_crypto);
+
+                initialiser_message(&msg, ORDRE_MES, config.nom_utilisateur, texte_crypte);
+                envoyer_message(sockfd_client, &msg, "127.0.0.1",
+                              groupes_rejoints[index].port);
+            } else {
+                /* Send command */
+                if (strncmp(ligne, "list", 4) == 0) {
+                    initialiser_message(&msg, ORDRE_LMG, config.nom_utilisateur, "");
+                    struct_message reponse;
+                    struct sockaddr_in addr;
+
+                    envoyer_message(sockfd_client, &msg, "127.0.0.1",
+                                  groupes_rejoints[index].port);
+                    
+                    /* Wait for response */
+                    struct timeval tv = {2, 0};
+                    setsockopt(sockfd_client, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+                    if (recevoir_message(sockfd_client, &reponse, &addr) > 0) {
+                        printf("Membres : %s\n", reponse.Texte);
+                    }
+                    tv.tv_sec = 0;
+                    setsockopt(sockfd_client, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+
+                } else if (strncmp(ligne, "delete ", 7) == 0) {
+                    char *nom_membre = ligne + 7;
+                    initialiser_message(&msg, ORDRE_MOD, config.nom_utilisateur, nom_membre);
+                    envoyer_message(sockfd_client, &msg, "127.0.0.1",
+                                  groupes_rejoints[index].port);
+                    printf("Demande de suppression de %s envoyee\n", nom_membre);
+                } else {
+                    printf("Commandes: list, delete <nom>\n");
+                }
+                }
+            }  /* End of user input block */
+        }  /* End of dialogue while loop */
     }
 }
 
-/* ========================================================================
-   REJOINDRE UN GROUPE
-   ======================================================================== */
+/* Quit and cleanup */
+void quitter() {
+    printf("Demande de deconnexion des groupes\n");
 
-void rejoindre_groupe(void)
-{
-    if (pseudo_utilisateur[0] == '\0')
-    {
-        printf("[ERREUR] Connectez-vous d'abord (option 1)\n");
-        return;
+    /* Quit all groups */
+    for (int i = 0; i < nb_groupes_rejoints; i++) {
+        if (groupes_rejoints[i].actif) {
+            struct_message msg;
+            initialiser_message(&msg, ORDRE_QUG, config.nom_utilisateur, "");
+            envoyer_message(sockfd_client, &msg, config.ip_serveur, 
+                          groupes_rejoints[i].port);
+        }
     }
 
-    Message msg;
-    initialiser_message(&msg);
+    /* Terminate all display processes and cleanup shared memory */
+    printf("Attente de fermeture des affichages\n");
+    for (int i = 0; i < nb_groupes_rejoints; i++) {
+        if (groupes_rejoints[i].actif) {
+            /* Signal display process to terminate */
+            if (groupes_rejoints[i].shm != NULL && groupes_rejoints[i].sem_id >= 0) {
+                P(groupes_rejoints[i].sem_id);
+                groupes_rejoints[i].shm->actif = 0;
+                V(groupes_rejoints[i].sem_id);
+            }
 
-    msg.type = MSG_REJOINDRE_GROUPE;
-    msg.id_client = id_client_local;
-    msg.id_groupe = ID_GROUPE_AUCUN;
-    strncpy(msg.pseudo, pseudo_utilisateur, TAILLE_PSEUDO - 1);
+            /* Kill display process */
+            if (groupes_rejoints[i].pid_affichage > 0) {
+                kill(groupes_rejoints[i].pid_affichage, SIGTERM);
+                waitpid(groupes_rejoints[i].pid_affichage, NULL, 0);
+            }
 
-    printf("\nNom du groupe à rejoindre : ");
-    if (fgets(msg.texte, TAILLE_TEXTE, stdin) == NULL)
-    {
-        printf("[ERREUR] Lecture nom échouée\n");
-        return;
-    }
-    supprimer_retour_ligne(msg.texte);
-
-    if (strlen(msg.texte) == 0)
-    {
-        printf("[ERREUR] Nom de groupe vide\n");
-        return;
-    }
-
-    if (sendto(sockfd, &msg, sizeof(msg), 0,
-               (struct sockaddr *)&adresse_serveur, sizeof(adresse_serveur)) < 0)
-    {
-        perror("[ERREUR] sendto()");
-        return;
-    }
-
-    // Attendre réponse
-    Message reponse;
-    if (recevoir_reponse(&reponse, 2) > 0)
-    {
-        if (reponse.type == MSG_REJOINDRE_GROUPE)
-        {
-            printf("[SERVEUR] %s\n", reponse.texte);
-            if (reponse.id_groupe >= 0)
-            {
-                groupe_actuel = reponse.id_groupe;
-                // Sauvegarder le nom du groupe
-                strncpy(nom_groupe_actuel, msg.texte, TAILLE_NOM_GROUPE - 1);
-                nom_groupe_actuel[TAILLE_NOM_GROUPE - 1] = '\0';
-                printf("[INFO] Vous êtes maintenant dans le groupe: %s\n", nom_groupe_actuel);
+            /* Cleanup shared memory and semaphore */
+            if (groupes_rejoints[i].shm != NULL) {
+                detacher_shm(groupes_rejoints[i].shm);
+            }
+            if (groupes_rejoints[i].sem_id >= 0) {
+                supprimer_semaphore(groupes_rejoints[i].sem_id);
+            }
+            if (groupes_rejoints[i].shm_id >= 0) {
+                supprimer_shm(groupes_rejoints[i].shm_id);
             }
         }
     }
+    printf("Affichages clos\n");
+
+    /* Disconnect from server */
+    struct_message msg;
+    initialiser_message(&msg, ORDRE_DEC, config.nom_utilisateur, "");
+    envoyer_message(sockfd_client, &msg, config.ip_serveur, config.port_serveur);
+
+    printf("Fin du programme\n");
 }
 
-/* ========================================================================
-   QUITTER UN GROUPE
-   ======================================================================== */
-
-void quitter_groupe(void)
-{
-    if (groupe_actuel < 0)
-    {
-        printf("[ERREUR] Vous n'êtes dans aucun groupe\n");
-        return;
-    }
-
-    Message msg;
-    initialiser_message(&msg);
-
-    msg.type = MSG_QUITTER_GROUPE;
-    msg.id_client = id_client_local;
-    msg.id_groupe = groupe_actuel;
-    strncpy(msg.pseudo, pseudo_utilisateur, TAILLE_PSEUDO - 1);
-
-    if (sendto(sockfd, &msg, sizeof(msg), 0,
-               (struct sockaddr *)&adresse_serveur, sizeof(adresse_serveur)) < 0)
-    {
-        perror("[ERREUR] sendto()");
-        return;
-    }
-
-    // Attendre réponse
-    Message reponse;
-    if (recevoir_reponse(&reponse, 2) > 0)
-    {
-        if (reponse.type == MSG_QUITTER_GROUPE)
-        {
-            printf("[SERVEUR] %s\n", reponse.texte);
-            if (reponse.id_groupe >= 0)
-            {
-                groupe_actuel = ID_GROUPE_AUCUN;
-                memset(nom_groupe_actuel, 0, TAILLE_NOM_GROUPE);
-            }
-        }
-    }
-}
-
-/* ========================================================================
-   ENVOYER UN MESSAGE DANS LE GROUPE
-   ======================================================================== */
-
-void envoyer_message_groupe(void)
-{
-    if (pseudo_utilisateur[0] == '\0')
-    {
-        printf("[ERREUR] Connectez-vous d'abord (option 1)\n");
-        return;
-    }
-
-    if (groupe_actuel < 0)
-    {
-        printf("[ERREUR] Rejoignez un groupe d'abord (option 4)\n");
-        return;
-    }
-
-    Message msg;
-    initialiser_message(&msg);
-
-    msg.type = MSG_ENVOI_MESSAGE;
-    msg.id_client = id_client_local;
-    msg.id_groupe = groupe_actuel;
-    strncpy(msg.pseudo, pseudo_utilisateur, TAILLE_PSEUDO - 1);
-
-    printf("\nVotre message : ");
-    if (fgets(msg.texte, TAILLE_TEXTE, stdin) == NULL)
-    {
-        printf("[ERREUR] Lecture message échouée\n");
-        return;
-    }
-    supprimer_retour_ligne(msg.texte);
-
-    if (strlen(msg.texte) == 0)
-    {
-        printf("[ERREUR] Message vide\n");
-        return;
-    }
-
-    if (sendto(sockfd, &msg, sizeof(msg), 0,
-               (struct sockaddr *)&adresse_serveur, sizeof(adresse_serveur)) < 0)
-    {
-        perror("[ERREUR] sendto()");
-        return;
-    }
-
-    printf("[OK] Message envoyé au groupe '%s'\n", nom_groupe_actuel);
-}
-
-/* ========================================================================
-   DÉCONNEXION
-   ======================================================================== */
-
-void se_deconnecter(void)
-{
-    if (pseudo_utilisateur[0] == '\0')
-    {
-        printf("[INFO] Vous n'êtes pas connecté\n");
-        return;
-    }
-
-    Message msg;
-    initialiser_message(&msg);
-
-    msg.type = MSG_DECONNEXION;
-    msg.id_client = id_client_local;
-    msg.id_groupe = ID_GROUPE_AUCUN;
-    strncpy(msg.pseudo, pseudo_utilisateur, TAILLE_PSEUDO - 1);
-    snprintf(msg.texte, TAILLE_TEXTE, "Déconnexion");
-
-    sendto(sockfd, &msg, sizeof(msg), 0,
-           (struct sockaddr *)&adresse_serveur, sizeof(adresse_serveur));
-
-    printf("[OK] Déconnexion envoyée (pseudo: %s)\n", msg.pseudo);
-
-    // Réinitialiser
-    memset(pseudo_utilisateur, 0, TAILLE_PSEUDO);
-    groupe_actuel = ID_GROUPE_AUCUN;
-    memset(nom_groupe_actuel, 0, TAILLE_NOM_GROUPE);
-}
-
-/* ========================================================================
-   FONCTION PRINCIPALE
-   ======================================================================== */
-
-int main(void)
-{
-    printf("╔════════════════════════════════════════╗\n");
-    printf("║      CLIENT ISY - PHASE 2              ║\n");
-    printf("║      Gestion des groupes (CRUD)        ║\n");
-    printf("╚════════════════════════════════════════╝\n\n");
-
-    // Génération ID client (toujours < NB_MAX_CLIENTS)
-    id_client_local = getpid() % NB_MAX_CLIENTS;
-    printf("[INFO] ID Client local : %d\n", id_client_local);
-
-    // Socket UDP
-    sockfd = creer_socket_udp();
-    initialiser_adresse(&adresse_serveur, IP_SERVEUR, PORT_SERVEUR);
-    printf("[INFO] Serveur cible : %s:%d\n", IP_SERVEUR, PORT_SERVEUR);
-    printf("─────────────────────────────────────────\n");
-
-    // Boucle du menu
-    int quitter = 0;
+/* Main menu */
+void menu() {
     int choix;
 
-    while (!quitter)
-    {
-        afficher_menu();
+    while (client_actif) {
+        printf("\nChoix des commandes :\n");
+        printf("  0 Creation de groupe\n");
+        printf("  1 Rejoindre un groupe\n");
+        printf("  2 Lister les groupes\n");
+        printf("  3 Dialoguer sur un groupe\n");
+        printf("  4 Quitter\n");
+        printf("Choix :\n>");
 
-        if (scanf("%d", &choix) != 1)
-        {
-            while (getchar() != '\n')
-                ;
-            printf("⚠ Saisie invalide\n");
+        if (scanf("%d", &choix) != 1) {
+            if (!client_actif) {
+                /* CTRL-C pressed during input */
+                quitter();
+                return;
+            }
+            while (getchar() != '\n');  /* Clear input buffer */
+            printf("Erreur: choix invalide\n");
             continue;
         }
-        while (getchar() != '\n')
-            ;
+        while (getchar() != '\n');  /* Clear newline */
 
-        switch (choix)
-        {
-        case 1:
-            se_connecter();
-            break;
-        case 2:
-            creer_groupe();
-            break;
-        case 3:
-            lister_groupes();
-            break;
-        case 4:
-            rejoindre_groupe();
-            break;
-        case 5:
-            quitter_groupe();
-            break;
-        case 6:
-            envoyer_message_groupe();
-            break;
-        case 7:
-            se_deconnecter();
-            break;
-        case 8:
-            printf("\n[INFO] Fermeture du client...\n");
-            quitter = 1;
-            break;
-        default:
-            printf("⚠ Choix invalide (1-8)\n");
+        if (!client_actif) {
+            /* CTRL-C pressed */
+            quitter();
+            return;
+        }
+
+        switch (choix) {
+            case 0:
+                creer_groupe_cmd();
+                break;
+            case 1:
+                rejoindre_groupe_cmd();
+                break;
+            case 2:
+                lister_groupes_cmd();
+                break;
+            case 3:
+                dialoguer_groupe_cmd();
+                break;
+            case 4:
+                quitter();
+                return;
+            default:
+                printf("Choix invalide\n");
         }
     }
 
-    close(sockfd);
-    printf("[OK] Client arrêté\n");
+    /* If we exit the loop due to signal */
+    quitter();
+}
 
-    return EXIT_SUCCESS;
+/* Main function */
+int main(int argc, char *argv[]) {
+    struct_message msg, reponse;
+
+    printf("=== ClientISY - Client de messagerie ===\n\n");
+
+    /* Install signal handler */
+    signal(SIGINT, gestionnaire_signal);
+    signal(SIGCHLD, SIG_IGN);
+
+    /* Read configuration */
+    if (argc > 1) {
+        if (lire_config_client(argv[1], &config) < 0) {
+            exit(EXIT_FAILURE);
+        }
+    } else {
+        if (lire_config_client("conf/client.conf", &config) < 0) {
+            exit(EXIT_FAILURE);
+        }
+    }
+    printf("Lecture du fichier de configuration OK, utilisateur %s\n", 
+           config.nom_utilisateur);
+
+    /* Initialize groups array */
+    memset(groupes_rejoints, 0, sizeof(groupes_rejoints));
+
+    /* Create socket */
+    sockfd_client = creer_socket_udp();
+
+    /* Bind to any port */
+    lier_socket(sockfd_client, "0.0.0.0", 0);
+
+    /* Connect to server */
+    initialiser_message(&msg, ORDRE_CON, config.nom_utilisateur, "");
+    if (envoyer_et_recevoir(&msg, &reponse) > 0) {
+        if (strcmp(reponse.Ordre, ORDRE_ACK) == 0) {
+            printf("Connexion au serveur reussie\n");
+        }
+    }
+
+    /* Main menu */
+    menu();
+
+    /* Cleanup */
+    close(sockfd_client);
+
+    return 0;
 }

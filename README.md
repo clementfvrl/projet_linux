@@ -25,16 +25,16 @@ git push
 
 ### Fonctionnalités imposées par le professeur
 
-- Créer et lister les groupes
-- Supprimer un groupe (**Admin**)
-- Rejoindre et quitter un groupe
-- Envoyer un message dans un groupe
-- Lire les messages d'un groupe
-- Lister les membres d'un groupe
-- Modérer les membres d'un groupe (**Admin**)
-- Chiffrement des messages
-- Fusion des groupes de discussion (membres + messages, **Admin**)
+-   Créer et lister les groupes
+-   Supprimer un groupe (**Admin**)
+-   Rejoindre et quitter un groupe
+-   Envoyer un message dans un groupe
+-   Lire les messages d'un groupe
+-   Lister les membres d'un groupe
+-   Modérer les membres d'un groupe (**Admin**)
+-   Chiffrement des messages
+-   Fusion de deux groupes de discussion (**Admin**)
 
 ### Fonctionnalité ajoutée par le groupe
 
-- Statistiques sur l'activité des membres du groupe
+-   Statistiques sur l'activité des membres du groupe et du groupe en lui-même
