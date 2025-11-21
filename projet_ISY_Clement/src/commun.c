@@ -232,3 +232,51 @@ int lire_config_client(const char *fichier, config_client *config) {
     fclose(f);
     return 0;
 }
+
+/* Verify user credentials - returns 1 if valid, 0 if invalid */
+int verifier_utilisateur(const char *username, const char *password) {
+    FILE *f = fopen("data/users.txt", "r");
+    if (f == NULL) {
+        /* If file doesn't exist, create first user */
+        return creer_utilisateur(username, password);
+    }
+
+    char ligne[256];
+    char stored_user[20], stored_pass[32];
+
+    while (fgets(ligne, sizeof(ligne), f) != NULL) {
+        /* Format: username:password */
+        if (sscanf(ligne, "%19[^:]:%31s", stored_user, stored_pass) == 2) {
+            if (strcmp(stored_user, username) == 0) {
+                fclose(f);
+                /* User exists, check password */
+                return (strcmp(stored_pass, password) == 0) ? 1 : 0;
+            }
+        }
+    }
+
+    fclose(f);
+    /* User not found - auto-register new user */
+    return creer_utilisateur(username, password);
+}
+
+/* Create new user - returns 1 on success, 0 on failure */
+int creer_utilisateur(const char *username, const char *password) {
+    /* Check if username is valid (no colons, newlines) */
+    if (strchr(username, ':') != NULL || strchr(username, '\n') != NULL ||
+        strlen(username) == 0 || strlen(password) == 0) {
+        return 0;
+    }
+
+    FILE *f = fopen("data/users.txt", "a");
+    if (f == NULL) {
+        perror("Erreur: impossible de creer l'utilisateur");
+        return 0;
+    }
+
+    fprintf(f, "%s:%s\n", username, password);
+    fclose(f);
+
+    printf("Nouvel utilisateur cree: %s\n", username);
+    return 1;
+}

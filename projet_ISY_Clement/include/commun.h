@@ -29,6 +29,7 @@
 #define ORDRE_LMG "LMG"      /* List members of group */
 #define ORDRE_MOD "MOD"      /* Moderate member */
 #define ORDRE_FUS "FUS"      /* Merge groups */
+#define ORDRE_LOG "LOG"      /* Login authentication */
 #define ORDRE_ACK "ACK"      /* Acknowledgment */
 #define ORDRE_ERR "ERR"      /* Error */
 #define ORDRE_INF "INF"      /* Information */
@@ -44,6 +45,7 @@ typedef struct {
 typedef struct {
     char nom[50];                    /* Group name */
     char moderateur[20];             /* Group moderator (creator) */
+    char password[32];               /* Group password (empty if no password) */
     int port;                        /* Group port (80xx) */
     int num_groupe;                  /* Group number */
     int max_membres;                 /* Maximum members */
@@ -130,5 +132,9 @@ void sem_signal(int sem_id);
 /* Configuration file utilities */
 int lire_config_serveur(const char *fichier, config_serveur *config);
 int lire_config_client(const char *fichier, config_client *config);
+
+/* User authentication utilities */
+int verifier_utilisateur(const char *username, const char *password);
+int creer_utilisateur(const char *username, const char *password);
 
 #endif /* COMMUN_H */

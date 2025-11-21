@@ -57,29 +57,67 @@ int envoyer_et_recevoir(struct_message *envoi, struct_message *reponse) {
 /* Create a group */
 void creer_groupe_cmd() {
     struct_message msg, reponse;
-    char nom_groupe[50];
+    char nom_groupe[50], password[32], texte_creation[100];
+    int max_membres;
+    char choix;
 
     printf("Saisir le nom du groupe\n");
-    if (fgets(nom_groupe, sizeof(nom_groupe), stdin) != NULL) {
-        nom_groupe[strcspn(nom_groupe, "\n")] = '\0';
+    if (fgets(nom_groupe, sizeof(nom_groupe), stdin) == NULL) {
+        return;
+    }
+    nom_groupe[strcspn(nom_groupe, "\n")] = '\0';
 
-        if (strlen(nom_groupe) == 0) {
-            printf("Erreur: nom de groupe vide\n");
+    if (strlen(nom_groupe) == 0) {
+        printf("Erreur: nom de groupe vide\n");
+        return;
+    }
+
+    /* Ask for password protection */
+    printf("Proteger le groupe par mot de passe ? (o/n) : ");
+    scanf(" %c", &choix);
+    while (getchar() != '\n');
+
+    password[0] = '\0';
+    if (choix == 'o' || choix == 'O') {
+        printf("Mot de passe du groupe : ");
+        if (fgets(password, sizeof(password), stdin) == NULL) {
             return;
         }
+        password[strcspn(password, "\n")] = '\0';
+    }
 
-        initialiser_message(&msg, ORDRE_CRG, config.nom_utilisateur, nom_groupe);
-        printf("Envoi de la demande au serveur\n");
+    /* Ask for max members */
+    printf("Nombre maximum de membres (0 = defaut %d) : ", MAX_MEMBRES_PAR_GROUPE);
+    if (scanf("%d", &max_membres) != 1) {
+        max_membres = 0;
+    }
+    while (getchar() != '\n');
 
-        if (envoyer_et_recevoir(&msg, &reponse) > 0) {
-            if (strcmp(reponse.Ordre, ORDRE_ACK) == 0) {
-                printf("Groupe cree !\n");
-            } else {
-                printf("Erreur: %s\n", reponse.Texte);
+    /* Format: "nom_groupe:password:max_membres" */
+    if (strlen(password) > 0) {
+        snprintf(texte_creation, sizeof(texte_creation), "%s:%s:%d",
+                 nom_groupe, password, max_membres);
+    } else if (max_membres > 0) {
+        snprintf(texte_creation, sizeof(texte_creation), "%s::%d",
+                 nom_groupe, max_membres);
+    } else {
+        strncpy(texte_creation, nom_groupe, sizeof(texte_creation) - 1);
+    }
+
+    initialiser_message(&msg, ORDRE_CRG, config.nom_utilisateur, texte_creation);
+    printf("Envoi de la demande au serveur\n");
+
+    if (envoyer_et_recevoir(&msg, &reponse) > 0) {
+        if (strcmp(reponse.Ordre, ORDRE_ACK) == 0) {
+            printf("Groupe cree !\n");
+            if (strlen(password) > 0) {
+                printf("Note: Le mot de passe est requis pour rejoindre ce groupe\n");
             }
         } else {
-            printf("Erreur: pas de reponse du serveur\n");
+            printf("Erreur: %s\n", reponse.Texte);
         }
+    } else {
+        printf("Erreur: pas de reponse du serveur\n");
     }
 }
 
@@ -96,113 +134,176 @@ void lister_groupes_cmd() {
     }
 }
 
+/* Merge two groups */
+void fusionner_groupes_cmd() {
+    struct_message msg, reponse;
+    char nom_dest[50], nom_source[50];
+    char fusion_texte[100];
+
+    printf("Fusion de groupes (vous devez etre moderateur des deux groupes)\n");
+    printf("Saisir le nom du groupe de destination (qui va recevoir les membres)\n");
+    if (fgets(nom_dest, sizeof(nom_dest), stdin) == NULL) {
+        return;
+    }
+    nom_dest[strcspn(nom_dest, "\n")] = '\0';
+
+    if (strlen(nom_dest) == 0) {
+        printf("Erreur: nom de groupe vide\n");
+        return;
+    }
+
+    printf("Saisir le nom du groupe source (qui va etre supprime)\n");
+    if (fgets(nom_source, sizeof(nom_source), stdin) == NULL) {
+        return;
+    }
+    nom_source[strcspn(nom_source, "\n")] = '\0';
+
+    if (strlen(nom_source) == 0) {
+        printf("Erreur: nom de groupe vide\n");
+        return;
+    }
+
+    /* Format: "groupe_dest,groupe_source" */
+    snprintf(fusion_texte, sizeof(fusion_texte), "%s,%s", nom_dest, nom_source);
+
+    initialiser_message(&msg, ORDRE_FUS, config.nom_utilisateur, fusion_texte);
+    printf("Envoi de la demande de fusion au serveur\n");
+
+    if (envoyer_et_recevoir(&msg, &reponse) > 0) {
+        if (strcmp(reponse.Ordre, ORDRE_ACK) == 0) {
+            printf("Fusion reussie ! Le groupe %s a ete fusionne dans %s\n",
+                   nom_source, nom_dest);
+            printf("Le groupe %s n'existe plus.\n", nom_source);
+        } else {
+            printf("Erreur: %s\n", reponse.Texte);
+        }
+    } else {
+        printf("Erreur: pas de reponse du serveur\n");
+    }
+}
+
 /* Join a group */
 void rejoindre_groupe_cmd() {
     struct_message msg, reponse;
-    char nom_groupe[50];
+    char nom_groupe[50], password[32], texte_join[100];
 
     printf("Saisir le nom du groupe\n");
-    if (fgets(nom_groupe, sizeof(nom_groupe), stdin) != NULL) {
-        nom_groupe[strcspn(nom_groupe, "\n")] = '\0';
+    if (fgets(nom_groupe, sizeof(nom_groupe), stdin) == NULL) {
+        return;
+    }
+    nom_groupe[strcspn(nom_groupe, "\n")] = '\0';
 
-        if (strlen(nom_groupe) == 0) {
-            printf("Erreur: nom de groupe vide\n");
+    if (strlen(nom_groupe) == 0) {
+        printf("Erreur: nom de groupe vide\n");
+        return;
+    }
+
+    /* Check if already joined */
+    for (int i = 0; i < nb_groupes_rejoints; i++) {
+        if (groupes_rejoints[i].actif &&
+            strcmp(groupes_rejoints[i].nom, nom_groupe) == 0) {
+            printf("Vous avez deja rejoint ce groupe\n");
+            return;
+        }
+    }
+
+    /* Ask for password (user can press Enter to skip if no password) */
+    printf("Mot de passe du groupe (Entree si aucun) : ");
+    if (fgets(password, sizeof(password), stdin) == NULL) {
+        return;
+    }
+    password[strcspn(password, "\n")] = '\0';
+
+    /* Format: "nom_groupe:password" */
+    if (strlen(password) > 0) {
+        snprintf(texte_join, sizeof(texte_join), "%s:%s", nom_groupe, password);
+    } else {
+        strncpy(texte_join, nom_groupe, sizeof(texte_join) - 1);
+    }
+
+    /* Request group info */
+    initialiser_message(&msg, ORDRE_JOG, config.nom_utilisateur, texte_join);
+
+    if (envoyer_et_recevoir(&msg, &reponse) > 0) {
+        if (strcmp(reponse.Ordre, ORDRE_ERR) == 0) {
+            printf("Erreur: %s\n", reponse.Texte);
             return;
         }
 
-        /* Check if already joined */
-        for (int i = 0; i < nb_groupes_rejoints; i++) {
-            if (groupes_rejoints[i].actif &&
-                strcmp(groupes_rejoints[i].nom, nom_groupe) == 0) {
-                printf("Vous avez deja rejoint ce groupe\n");
-                return;
-            }
+        int port_groupe = atoi(reponse.Texte);
+        printf("Connexion au groupe %s realisee, lancement de l'affichage\n", nom_groupe);
+
+        /* Create shared memory for AffichageISY */
+        int shm_id = creer_shm(sizeof(shm_affichage));
+        if (shm_id < 0) {
+            perror("Erreur: creation SHM pour affichage");
+            return;
         }
 
-        /* Request group info */
-        initialiser_message(&msg, ORDRE_JOG, config.nom_utilisateur, nom_groupe);
-
-        if (envoyer_et_recevoir(&msg, &reponse) > 0) {
-            if (strcmp(reponse.Ordre, ORDRE_ERR) == 0) {
-                printf("Erreur: %s\n", reponse.Texte);
-                return;
-            }
-
-            int port_groupe = atoi(reponse.Texte);
-            printf("Connexion au groupe %s realisee, lancement de l'affichage\n", nom_groupe);
-
-            /* Create shared memory for AffichageISY */
-            int shm_id = creer_shm(sizeof(shm_affichage));
-            if (shm_id < 0) {
-                perror("Erreur: creation SHM pour affichage");
-                return;
-            }
-
-            /* Attach to shared memory */
-            shm_affichage *shm = (shm_affichage *)attacher_shm(shm_id);
-            if (shm == NULL) {
-                perror("Erreur: attachement SHM pour affichage");
-                supprimer_shm(shm_id);
-                return;
-            }
-
-            /* Create semaphore for synchronization */
-            int sem_id = creer_semaphore();
-            if (sem_id < 0) {
-                perror("Erreur: creation semaphore pour affichage");
-                detacher_shm(shm);
-                supprimer_shm(shm_id);
-                return;
-            }
-
-            /* Initialize shared memory */
-            shm->nb_messages = 0;
-            shm->actif = 1;
-            shm->shm_id = shm_id;
-            shm->sem_id = sem_id;
-
-            /* Fork AffichageISY process */
-            pid_t pid = fork();
-            if (pid < 0) {
-                perror("Erreur: fork pour AffichageISY");
-                supprimer_semaphore(sem_id);
-                detacher_shm(shm);
-                supprimer_shm(shm_id);
-                return;
-            }
-
-            if (pid == 0) {
-                /* Child process */
-                char port_str[10], nom_str[50], shm_id_str[20], sem_id_str[20];
-                snprintf(port_str, sizeof(port_str), "%d", port_groupe);
-                snprintf(nom_str, sizeof(nom_str), "%s", nom_groupe);
-                snprintf(shm_id_str, sizeof(shm_id_str), "%d", shm_id);
-                snprintf(sem_id_str, sizeof(sem_id_str), "%d", sem_id);
-
-                execl("./bin/AffichageISY", "AffichageISY", nom_str,
-                      config.nom_utilisateur, shm_id_str, sem_id_str, NULL);
-
-                perror("Erreur: execl AffichageISY");
-                exit(EXIT_FAILURE);
-            }
-
-            /* Parent process - save group info */
-            if (nb_groupes_rejoints < 10) {
-                strncpy(groupes_rejoints[nb_groupes_rejoints].nom, nom_groupe, 49);
-                groupes_rejoints[nb_groupes_rejoints].port = port_groupe;
-                groupes_rejoints[nb_groupes_rejoints].pid_affichage = pid;
-                groupes_rejoints[nb_groupes_rejoints].actif = 1;
-                groupes_rejoints[nb_groupes_rejoints].shm_id = shm_id;
-                groupes_rejoints[nb_groupes_rejoints].sem_id = sem_id;
-                groupes_rejoints[nb_groupes_rejoints].shm = shm;
-                nb_groupes_rejoints++;
-            }
-
-            /* Join the group via UDP - send to group port on server */
-            struct_message join_msg;
-            initialiser_message(&join_msg, ORDRE_JOG, config.nom_utilisateur, "");
-            envoyer_message(sockfd_client, &join_msg, "127.0.0.1", port_groupe);
+        /* Attach to shared memory */
+        shm_affichage *shm = (shm_affichage *)attacher_shm(shm_id);
+        if (shm == NULL) {
+            perror("Erreur: attachement SHM pour affichage");
+            supprimer_shm(shm_id);
+            return;
         }
+
+        /* Create semaphore for synchronization */
+        int sem_id = creer_semaphore();
+        if (sem_id < 0) {
+            perror("Erreur: creation semaphore pour affichage");
+            detacher_shm(shm);
+            supprimer_shm(shm_id);
+            return;
+        }
+
+        /* Initialize shared memory */
+        shm->nb_messages = 0;
+        shm->actif = 1;
+        shm->shm_id = shm_id;
+        shm->sem_id = sem_id;
+
+        /* Fork AffichageISY process */
+        pid_t pid = fork();
+        if (pid < 0) {
+            perror("Erreur: fork pour AffichageISY");
+            supprimer_semaphore(sem_id);
+            detacher_shm(shm);
+            supprimer_shm(shm_id);
+            return;
+        }
+
+        if (pid == 0) {
+            /* Child process */
+            char port_str[10], nom_str[50], shm_id_str[20], sem_id_str[20];
+            snprintf(port_str, sizeof(port_str), "%d", port_groupe);
+            snprintf(nom_str, sizeof(nom_str), "%s", nom_groupe);
+            snprintf(shm_id_str, sizeof(shm_id_str), "%d", shm_id);
+            snprintf(sem_id_str, sizeof(sem_id_str), "%d", sem_id);
+
+            execl("./bin/AffichageISY", "AffichageISY", nom_str,
+                  config.nom_utilisateur, shm_id_str, sem_id_str, NULL);
+
+            perror("Erreur: execl AffichageISY");
+            exit(EXIT_FAILURE);
+        }
+
+        /* Parent process - save group info */
+        if (nb_groupes_rejoints < 10) {
+            strncpy(groupes_rejoints[nb_groupes_rejoints].nom, nom_groupe, 49);
+            groupes_rejoints[nb_groupes_rejoints].port = port_groupe;
+            groupes_rejoints[nb_groupes_rejoints].pid_affichage = pid;
+            groupes_rejoints[nb_groupes_rejoints].actif = 1;
+            groupes_rejoints[nb_groupes_rejoints].shm_id = shm_id;
+            groupes_rejoints[nb_groupes_rejoints].sem_id = sem_id;
+            groupes_rejoints[nb_groupes_rejoints].shm = shm;
+            nb_groupes_rejoints++;
+        }
+
+        /* Join the group via UDP - send to group port on server */
+        struct_message join_msg;
+        initialiser_message(&join_msg, ORDRE_JOG, config.nom_utilisateur, "");
+        envoyer_message(sockfd_client, &join_msg, "127.0.0.1", port_groupe);
     }
 }
 
@@ -266,24 +367,29 @@ void dialoguer_groupe_cmd() {
                 struct_message incoming_msg;
                 struct sockaddr_in incoming_addr;
                 if (recevoir_message(sockfd_client, &incoming_msg, &incoming_addr) > 0) {
-                    /* Write message to shared memory for AffichageISY to display */
-                    shm_affichage *shm = groupes_rejoints[index].shm;
-                    if (shm != NULL && groupes_rejoints[index].sem_id >= 0) {
-                        P(groupes_rejoints[index].sem_id);
-                        if (shm->nb_messages >= 100) {
-                            /* Buffer full - shift all messages left and add new one at the end */
-                            memmove(&shm->messages[0], &shm->messages[1],
-                                    sizeof(struct_message) * 99);
-                            memcpy(&shm->messages[99], &incoming_msg, sizeof(struct_message));
-                        } else {
-                            /* Normal case - add to end */
-                            memcpy(&shm->messages[shm->nb_messages], &incoming_msg, sizeof(struct_message));
-                            shm->nb_messages++;
+                    /* Only send chat messages (MES) and info messages (INF) to AffichageISY */
+                    /* Server responses (ACK, ERR for commands, INF for member lists) stay in Client */
+                    if (strcmp(incoming_msg.Ordre, ORDRE_MES) == 0 ||
+                        strcmp(incoming_msg.Ordre, ORDRE_INF) == 0) {
+                        /* Write message to shared memory for AffichageISY to display */
+                        shm_affichage *shm = groupes_rejoints[index].shm;
+                        if (shm != NULL && groupes_rejoints[index].sem_id >= 0) {
+                            P(groupes_rejoints[index].sem_id);
+                            if (shm->nb_messages >= 100) {
+                                /* Buffer full - shift all messages left and add new one at the end */
+                                memmove(&shm->messages[0], &shm->messages[1],
+                                        sizeof(struct_message) * 99);
+                                memcpy(&shm->messages[99], &incoming_msg, sizeof(struct_message));
+                            } else {
+                                /* Normal case - add to end */
+                                memcpy(&shm->messages[shm->nb_messages], &incoming_msg, sizeof(struct_message));
+                                shm->nb_messages++;
+                            }
+                            V(groupes_rejoints[index].sem_id);
                         }
-                        V(groupes_rejoints[index].sem_id);
                     }
 
-                    /* Handle error messages that require breaking the loop */
+                    /* Handle error messages (bans/kicks) that require breaking the loop */
                     if (strcmp(incoming_msg.Ordre, ORDRE_ERR) == 0) {
                         if (strstr(incoming_msg.Texte, "banni") != NULL ||
                             strstr(incoming_msg.Texte, "exclu") != NULL) {
@@ -364,6 +470,49 @@ void dialoguer_groupe_cmd() {
     }
 }
 
+/* Login with username and password */
+int login() {
+    struct_message msg, reponse;
+    char username[20], password[32];
+    char login_texte[100];
+
+    printf("\n=== Authentification ===\n\n");
+    printf("Nom d'utilisateur : ");
+    fflush(stdout);
+    if (fgets(username, sizeof(username), stdin) == NULL) {
+        return 0;
+    }
+    username[strcspn(username, "\n")] = '\0';
+
+    printf("Mot de passe : ");
+    fflush(stdout);
+    if (fgets(password, sizeof(password), stdin) == NULL) {
+        return 0;
+    }
+    password[strcspn(password, "\n")] = '\0';
+
+    /* Format: "username:password" */
+    snprintf(login_texte, sizeof(login_texte), "%s:%s", username, password);
+
+    initialiser_message(&msg, ORDRE_LOG, username, login_texte);
+
+    if (envoyer_et_recevoir(&msg, &reponse) > 0) {
+        if (strcmp(reponse.Ordre, ORDRE_ACK) == 0) {
+            /* Update config with authenticated username */
+            strncpy(config.nom_utilisateur, username, 19);
+            config.nom_utilisateur[19] = '\0';
+            printf("\n%s\n", reponse.Texte);
+            return 1;
+        } else {
+            printf("\nErreur: %s\n", reponse.Texte);
+            return 0;
+        }
+    } else {
+        printf("\nErreur: pas de reponse du serveur\n");
+        return 0;
+    }
+}
+
 /* Quit and cleanup */
 void quitter() {
     printf("Demande de deconnexion des groupes\n");
@@ -427,7 +576,8 @@ void menu() {
         printf("  1 Rejoindre un groupe\n");
         printf("  2 Lister les groupes\n");
         printf("  3 Dialoguer sur un groupe\n");
-        printf("  4 Quitter\n");
+        printf("  4 Fusionner deux groupes\n");
+        printf("  5 Quitter\n");
         printf("Choix :\n>");
 
         if (scanf("%d", &choix) != 1) {
@@ -462,6 +612,9 @@ void menu() {
                 dialoguer_groupe_cmd();
                 break;
             case 4:
+                fusionner_groupes_cmd();
+                break;
+            case 5:
                 quitter();
                 return;
             default:
@@ -493,8 +646,7 @@ int main(int argc, char *argv[]) {
             exit(EXIT_FAILURE);
         }
     }
-    printf("Lecture du fichier de configuration OK, utilisateur %s\n", 
-           config.nom_utilisateur);
+    printf("Lecture du fichier de configuration OK\n");
 
     /* Initialize groups array */
     memset(groupes_rejoints, 0, sizeof(groupes_rejoints));
@@ -505,11 +657,27 @@ int main(int argc, char *argv[]) {
     /* Bind to any port */
     lier_socket(sockfd_client, "0.0.0.0", 0);
 
+    /* Login required */
+    printf("Connexion au serveur %s:%d\n", config.ip_serveur, config.port_serveur);
+    while (!login()) {
+        printf("\nReessayer la connexion ? (o/n) : ");
+        char choix;
+        scanf(" %c", &choix);
+        while (getchar() != '\n');
+        if (choix != 'o' && choix != 'O') {
+            printf("Connexion annulee\n");
+            close(sockfd_client);
+            return 0;
+        }
+    }
+
+    printf("\nConnecte en tant que: %s\n", config.nom_utilisateur);
+
     /* Connect to server */
     initialiser_message(&msg, ORDRE_CON, config.nom_utilisateur, "");
     if (envoyer_et_recevoir(&msg, &reponse) > 0) {
         if (strcmp(reponse.Ordre, ORDRE_ACK) == 0) {
-            printf("Connexion au serveur reussie\n");
+            printf("Session etablie avec le serveur\n");
         }
     }
 
