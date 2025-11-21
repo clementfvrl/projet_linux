@@ -1,76 +1,107 @@
+/**********************************************
+ * FICHIER : Commun.h
+ * Rôle   : Déclarations communes ISY
+ *********************************************/
+
 #ifndef COMMUN_H
 #define COMMUN_H
 
-#include <stddef.h>
-#include <time.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+#include <signal.h>
+#include <errno.h>
+
+#include <sys/types.h>
+#include <sys/socket.h>
 #include <netinet/in.h>
+#include <arpa/inet.h>
 
-// Constantes globales
+/* ==== CONSTANTES GÉNÉRALES ==== */
 
-#define IP_SERVEUR "127.0.0.1"
-#define PORT_SERVEUR 8000
+#define ISY_PORT_SERVEUR     8000
+#define ISY_IP_SERVEUR       "127.0.0.1"
 
-// Tailles de chaînes
-#define TAILLE_PSEUDO 32
-#define TAILLE_NOM_GROUPE 32
-#define TAILLE_TEXTE 256
+#define ISY_MAX_GROUPES      16
+#define ISY_MAX_MEMBRES      32
 
-// Limites applicatives (adaptables)
-#define NB_MAX_CLIENTS 32
-#define NB_MAX_GROUPES 16
-#define NB_MAX_GROUPES_PAR_CLIENT 8
+#define ISY_TAILLE_ORDRE     4
+#define ISY_TAILLE_NOM       20
+#define ISY_TAILLE_TEXTE     100
 
-// Valeur spéciale pour "pas de groupe"
-#define ID_GROUPE_AUCUN (-1)
+/* ==== STRUCTURE DE MESSAGE ==== */
+/* Ordres simples (3 lettres + '\0') :
+ * "LST" : liste groupes
+ * "CRG" : créer groupe
+ * "JNG" : joindre groupe
+ * "ACK" : acquittement
+ * "ERR" : erreur
+ * "MSG" : message de groupe
+ */
 
-// Types de messages échangés
-typedef enum
+typedef struct struct_message {
+    char Ordre[ISY_TAILLE_ORDRE];
+    char Emetteur[ISY_TAILLE_NOM];
+    char Texte[ISY_TAILLE_TEXTE];
+} MessageISY;
+
+/* ==== DESCRIPTION D'UN GROUPE CÔTÉ SERVEUR ==== */
+
+typedef struct {
+    int  actif;           /* 0 = slot libre, 1 = utilisé */
+    int  id;              /* index dans le tableau */
+    char nom[32];
+    int  port;            /* port UDP du groupe (ex: 8100 + id) */
+    int  pid;             /* PID du processus GroupeISY associé */
+    char moderateurName[ISY_TAILLE_NOM]; /* nom du créateur/modérateur */
+} GroupeServeur;
+
+/* =================================================
+ * FONCTIONS UTILITAIRES COMMUNES (static inline)
+ * =================================================
+ *
+ * Ces fonctions sont définies ici pour éviter d'avoir
+ * un cinquième fichier .c (Commun.c). Chaque unité de
+ * compilation qui inclut Commun.h en aura sa propre
+ * copie, ce qui respecte la contrainte des 4 fichiers .c.
+ */
+
+/* Création d'un socket UDP */
+static inline int creer_socket_udp(void)
 {
-    MSG_CONNEXION = 1, /* Un client se connecte au serveur              */
-    MSG_DECONNEXION,   /* Un client se déconnecte du serveur            */
+    int sock = socket(AF_INET, SOCK_DGRAM, 0);
+    if (sock < 0) {
+        perror("socket");
+    }
+    return sock;
+}
 
-    MSG_CREER_GROUPE,     /* Demande de création d'un groupe               */
-    MSG_REJOINDRE_GROUPE, /* Rejoindre un groupe existant                  */
-    MSG_QUITTER_GROUPE,   /* Quitter un groupe                             */
-    MSG_LISTE_GROUPES,    /* Demande / réponse : liste des groupes         */
-
-    MSG_ENVOI_MESSAGE,  /* Client -> serveur : envoyer un message        */
-    MSG_MESSAGE_GROUPE, /* Serveur -> clients : message à diffuser       */
-
-    MSG_DEMANDE_STATS, /* Demande des statistiques d'un groupe          */
-    MSG_REPONSE_STATS, /* Réponse contenant les statistiques            */
-
-    MSG_ERREUR /* Message d'erreur générique                    */
-} TypeMessage;
-
-// Structure de base envoyée en UDP
-typedef struct
+/* Fermeture d'un socket UDP */
+static inline void fermer_socket_udp(int sock)
 {
-    TypeMessage type;           /* Type de message           */
-    int id_client;              /* Identifiant logique       */
-    int id_groupe;              /* Groupe concerné ou -1     */
-    char pseudo[TAILLE_PSEUDO]; /* Pseudo de l'émetteur      */
-    char texte[TAILLE_TEXTE];   /* Contenu (chiffré / clair) */
-} Message;
+    if (sock >= 0) {
+        close(sock);
+    }
+}
 
-// Prototypes de fonctions utilitaires
+/* Initialisation d'une struct sockaddr_in */
+static inline void init_sockaddr(struct sockaddr_in *addr,
+                                 const char *ip,
+                                 int port)
+{
+    memset(addr, 0, sizeof(*addr));
+    addr->sin_family      = AF_INET;
+    addr->sin_port        = htons(port);
+    addr->sin_addr.s_addr = inet_addr(ip);
+}
 
-/* Affiche un message d'erreur et termine le programme. */
-void erreur_fatale(const char *message);
+/* Affichage debug d'un message ISY */
+static inline void afficher_message_debug(const char *prefix,
+                                           const MessageISY *msg)
+{
+    printf("[%s] Ordre='%s' Emetteur='%s' Texte='%s'\n",
+           prefix, msg->Ordre, msg->Emetteur, msg->Texte);
+}
 
-/* Supprime le '\n' final d'une chaîne lue avec fgets, si présent. */
-void supprimer_retour_ligne(char *chaine);
-
-/* Affiche un message pour le debug (type, ids, pseudo, texte). */
-void debug_afficher_message(const Message *msg);
-
-/* Crée un socket UDP et retourne son descripteur. */
-int creer_socket_udp(void);
-
-/* Initialise une structure sockaddr_in avec IP et port. */
-void initialiser_adresse(struct sockaddr_in *addr, const char *ip, int port);
-
-/* Initialise une structure Message avec valeurs par défaut. */
-void initialiser_message(Message *msg);
-
-#endif
+#endif /* COMMUN_H */
