@@ -2,21 +2,36 @@
 @startuml
 actor Utilisateur as User
 top to bottom direction
+usecase (Se loguer)
+usecase (Renseigner premier Groupe)
+usecase (Verifier Groupe 1)
+usecase (Renseigner deuxième Groupe)
 usecase (Fusionner groupe) as create
+usecase (Verifier Groupe 2)
+usecase (Deplacer membre du groupe 1 dans groupe 2)
+usecase (Supprimer groupe 2)
+usecase (Notifier membres des groupes)
+usecase (Fusionner les informations)
 :User: -right- create
 
+note top of  (Se loguer) : "Si pas encore logué"
 (Se loguer) ..> create : << extends >> 
 
-note top of  (Se loguer) : "Si pas encore logué"
+note top of  (Renseigner premier Groupe) : "Le premier groupe accueille le deuxième groupe" 
+(Renseigner premier Groupe) <.. create : << include >>
 
-(Renseigner premier Groupe) ..> create : << include >>
-(Vérifier Group 1) ..> create : << include >>
-(Renseigner deuxième Groupe) ..> create : << include >>
-(Vérifier Groupe 2) ..> create : << include >>
-(Deplacer membre du groupe 1 dans groupe 2) <.. create : << extends >>
+(Verifier Groupe 1) <.. (Renseigner premier Groupe) : << include >>
+(Renseigner deuxième Groupe) <.. create : << include >>
+
+(Verifier Groupe 2) <.. (Renseigner deuxième Groupe) : << include >>
+
 note top of  (Deplacer membre du groupe 1 dans groupe 2) : "Si les deux groupes sont valides"
-(Supprimer groupe 2) <.. create : << extends >>
+(Deplacer membre du groupe 1 dans groupe 2) ..> create : << extends >>
+
+(Supprimer groupe 2) ..> create : << extends >>
 note top of  (Supprimer groupe 2) : "Si les deux groupes sont valides"
-(Notifier membres des groupes) <.. create : << extends >>
+(Notifier membres des groupes) ..> create : << extends >>
+note top of  (Fusionner les informations) : "les Statistiques, l'historique etc.\n ex : Mpape ballon or!"
+(Fusionner les informations) <.. create : << include >>
 
 @enduml

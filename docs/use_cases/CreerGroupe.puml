@@ -8,12 +8,12 @@ usecase (Créer groupe) as create
 
 :User: -right- create
 
-(Se loguer) <.. create : << extends >> 
+(Se loguer) ..> create : << extends >> 
 
 note top of  (Se loguer) : "Si pas encore logué"
 
-(Renseigner Groupe) ..> create : << include >>
-(Vérifier Groupe) ..> create : << include >>
-(Initialiser Groupe) <.. create : << extends >>
+(Renseigner Groupe) <.. create : << include >>
+(Vérifier Groupe) <.. create : << include >>
+(Initialiser Groupe) ..> create : << extends >>
 
 @enduml
