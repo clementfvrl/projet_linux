@@ -53,6 +53,8 @@ typedef struct {
     int  id;              /* index dans le tableau */
     char nom[32];
     int  port;            /* port UDP du groupe (ex: 8100 + id) */
+    int  pid;             /* PID du processus GroupeISY associé */
+    char moderateurName[ISY_TAILLE_NOM]; /* nom du créateur/modérateur */
 } GroupeServeur;
 
 /* =================================================

@@ -14,6 +14,16 @@ static pid_t g_pidAffichage   = 0;
 static char g_nomUtilisateur[ISY_TAILLE_NOM] = "user";
 
 /* ==== Fonctions utilitaires client ==== */
+/* Prototypes des actions */
+static void action_creer_groupe(void);
+static void action_lister_groupes(void);
+static void action_rejoindre_groupe(void);
+static void action_dialoguer_groupe(void);
+static void action_quitter_groupe(void);      
+static void action_supprimer_groupe(void);
+static void action_fusion_groupes(void);
+
+
 
 static void envoyer_message_serveur(const MessageISY *msgReq,
                                     MessageISY *msgRep)
@@ -151,6 +161,52 @@ static void action_dialoguer_groupe(void)
         buffer[strcspn(buffer, "\n")] = '\0';
         if (buffer[0] == '\0') break;
 
+        /* Si l'utilisateur souhaite entrer en mode commande, tape "cmd" */
+        if (strcmp(buffer, "cmd") == 0) {
+            /* Boucle de commande jusqu'à ce que l'utilisateur tape "msg" */
+            while (1) {
+                char cmdBuf[ISY_TAILLE_TEXTE];
+                printf("Commande : ");
+                if (fgets(cmdBuf, sizeof(cmdBuf), stdin) == NULL) break;
+                cmdBuf[strcspn(cmdBuf, "\n")] = '\0';
+                if (strcmp(cmdBuf, "msg") == 0) {
+                    /* retour au chat */
+                    break;
+                } else if (strcmp(cmdBuf, "quit") == 0) {
+                    /* quitter complètement le groupe */
+                    /* arrêter l'affichage et revenir au menu principal */
+                    fermer_socket_udp(sockG);
+                    action_quitter_groupe();
+                    return;
+                }
+                /* Envoyer la commande au groupe */
+                MessageISY cmdMsg;
+                memset(&cmdMsg, 0, sizeof(cmdMsg));
+                strncpy(cmdMsg.Ordre, "CMD", ISY_TAILLE_ORDRE - 1);
+                strncpy(cmdMsg.Emetteur, g_nomUtilisateur, ISY_TAILLE_NOM - 1);
+                strncpy(cmdMsg.Texte, cmdBuf, ISY_TAILLE_TEXTE - 1);
+                if (sendto(sockG, &cmdMsg, sizeof(cmdMsg), 0,
+                           (struct sockaddr *)&addrG, sizeof(addrG)) < 0) {
+                    perror("sendto CMD Client->Groupe");
+                }
+                /* Attendre une réponse */
+                MessageISY rep;
+                struct sockaddr_in addrR;
+                socklen_t lenR = sizeof(addrR);
+                ssize_t nrep = recvfrom(sockG, &rep, sizeof(rep), 0,
+                                        (struct sockaddr *)&addrR, &lenR);
+                if (nrep > 0) {
+                    rep.Ordre[ISY_TAILLE_ORDRE - 1] = '\0';
+                    rep.Emetteur[ISY_TAILLE_NOM - 1] = '\0';
+                    rep.Texte[ISY_TAILLE_TEXTE - 1] = '\0';
+                    printf("\n%s\n", rep.Texte);
+                } else {
+                    perror("recvfrom CMD response");
+                }
+            }
+            continue;
+        }
+
         MessageISY msg;
         memset(&msg, 0, sizeof(msg));
         strncpy(msg.Ordre, "MSG", ISY_TAILLE_ORDRE - 1);
@@ -178,6 +234,51 @@ static void action_quitter_groupe(void)
     g_portGroupeActif = 0;
 }
 
+/* Supprimer un groupe (demande envoyée au serveur). Seul le modérateur peut le faire. */
+static void action_supprimer_groupe(void)
+{
+    MessageISY req, rep;
+    memset(&req, 0, sizeof(req));
+    memset(&rep, 0, sizeof(rep));
+
+    strncpy(req.Ordre, "DEL", ISY_TAILLE_ORDRE - 1);
+    strncpy(req.Emetteur, g_nomUtilisateur, ISY_TAILLE_NOM - 1);
+
+    printf("Nom du groupe a supprimer : ");
+    if (fgets(req.Texte, ISY_TAILLE_TEXTE, stdin) == NULL) return;
+    req.Texte[strcspn(req.Texte, "\n")] = '\0';
+    if (req.Texte[0] == '\0') return;
+
+    envoyer_message_serveur(&req, &rep);
+
+    printf("Reponse serveur : [%s] %s\n", rep.Ordre, rep.Texte);
+}
+
+/* Fusionner deux groupes : saisir nom1 et nom2 et envoyer au serveur */
+static void action_fusion_groupes(void)
+{
+    MessageISY req, rep;
+    memset(&req, 0, sizeof(req));
+    memset(&rep, 0, sizeof(rep));
+
+    strncpy(req.Ordre, "FUS", ISY_TAILLE_ORDRE - 1);
+    strncpy(req.Emetteur, g_nomUtilisateur, ISY_TAILLE_NOM - 1);
+
+    char g1[64], g2[64];
+    printf("Nom du premier groupe : ");
+    if (fgets(g1, sizeof(g1), stdin) == NULL) return;
+    g1[strcspn(g1, "\n")] = '\0';
+    if (g1[0] == '\0') return;
+    printf("Nom du second groupe : ");
+    if (fgets(g2, sizeof(g2), stdin) == NULL) return;
+    g2[strcspn(g2, "\n")] = '\0';
+    if (g2[0] == '\0') return;
+    snprintf(req.Texte, ISY_TAILLE_TEXTE, "%s %s", g1, g2);
+
+    envoyer_message_serveur(&req, &rep);
+    printf("Reponse serveur : [%s] %s\n", rep.Ordre, rep.Texte);
+}
+
 /* ==== MAIN + MENU ==== */
 
 static void afficher_menu(void)
@@ -189,6 +290,8 @@ static void afficher_menu(void)
     printf("3. Rejoindre un groupe\n");
     printf("4. Dialoguer sur le groupe actif\n");
     printf("5. Quitter le groupe actif\n");
+    printf("6. Supprimer un groupe (moderateur)\n");
+    printf("7. Fusionner deux groupes (moderateur)\n");
     printf("Votre choix : ");
 }
 
@@ -226,6 +329,8 @@ int main(int argc, char *argv[])
             case 3: action_rejoindre_groupe();  break;
             case 4: action_dialoguer_groupe();  break;
             case 5: action_quitter_groupe();    break;
+            case 6: action_supprimer_groupe();  break;
+            case 7: action_fusion_groupes();    break;
             default:
                 printf("Choix invalide.\n");
         }

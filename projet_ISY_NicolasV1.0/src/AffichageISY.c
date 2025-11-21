@@ -13,21 +13,42 @@ int main(int argc, char *argv[])
     }
 
     int portGroupe = atoi(argv[1]);
-    printf("AffichageISY : ecoute sur port %d\n", portGroupe);
+    printf("AffichageISY : inscription sur le groupe (port %d)\n", portGroupe);
 
     int sock = creer_socket_udp();
     if (sock < 0) {
         exit(EXIT_FAILURE);
     }
 
+    /* 1) Bind local sur port 0 pour laisser le noyau choisir un port libre */
     struct sockaddr_in addrLocal;
-    init_sockaddr(&addrLocal, ISY_IP_SERVEUR, portGroupe);
+    init_sockaddr(&addrLocal, ISY_IP_SERVEUR, 0);  // port 0 = auto
     if (bind(sock, (struct sockaddr *)&addrLocal, sizeof(addrLocal)) < 0) {
         perror("bind AffichageISY");
         fermer_socket_udp(sock);
         exit(EXIT_FAILURE);
     }
 
+    /* 2) Préparer l’adresse du GroupeISY (port fixe du groupe) */
+    struct sockaddr_in addrGroupe;
+    init_sockaddr(&addrGroupe, ISY_IP_SERVEUR, portGroupe);
+
+    /* 3) Envoyer un message de REGISTRATION au groupe pour s'inscrire */
+    MessageISY reg;
+    memset(&reg, 0, sizeof(reg));
+    snprintf(reg.Ordre, ISY_TAILLE_ORDRE, "REG");
+    snprintf(reg.Emetteur, ISY_TAILLE_NOM, "Affichage");  // ou autre
+
+    if (sendto(sock, &reg, sizeof(reg), 0,
+               (struct sockaddr *)&addrGroupe, sizeof(addrGroupe)) < 0) {
+        perror("sendto REG vers GroupeISY");
+        fermer_socket_udp(sock);
+        exit(EXIT_FAILURE);
+    }
+
+    printf("AffichageISY : inscrit, attente des messages...\n");
+
+    /* 4) Boucle de réception des messages MSG */
     MessageISY msg;
     struct sockaddr_in addrExp;
     socklen_t lenExp = sizeof(addrExp);

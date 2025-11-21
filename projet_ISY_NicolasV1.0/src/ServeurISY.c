@@ -4,6 +4,8 @@
  *********************************************/
 
 #include "Commun.h"
+#include <signal.h>
+
 
 static int sock_serveur = -1;
 static GroupeServeur g_groupes[ISY_MAX_GROUPES];
@@ -15,6 +17,8 @@ static void init_groupes(void)
         g_groupes[i].id    = i;
         g_groupes[i].port  = 0;
         g_groupes[i].nom[0] = '\0';
+        g_groupes[i].pid = 0;
+        g_groupes[i].moderateurName[0] = '\0';
     }
 }
 
@@ -50,11 +54,13 @@ static int lancer_groupe_process(int idGroupe)
         /* Processus fils : execl GroupeISY */
         char portStr[16];
         snprintf(portStr, sizeof(portStr), "%d", g_groupes[idGroupe].port);
-        execl("./GroupeISY", "GroupeISY", portStr, (char *)NULL);
+        /* Passer aussi le nom du modérateur en argument */
+        execl("./GroupeISY", "GroupeISY", portStr, g_groupes[idGroupe].moderateurName, (char *)NULL);
         perror("execl GroupeISY");
         exit(EXIT_FAILURE);
     }
-    /* Père : on ne garde pas spécialement le pid ici */
+    /* Père : stocker le pid du groupe */
+    g_groupes[idGroupe].pid = (int)pid;
     return 0;
 }
 
@@ -84,6 +90,9 @@ static void traiter_creation_groupe(const MessageISY *msgReq,
     g_groupes[idx].port  = 8100 + idx;     /* ex: 8100, 8101, ... */
     strncpy(g_groupes[idx].nom, nomG, sizeof(g_groupes[idx].nom) - 1);
     g_groupes[idx].nom[sizeof(g_groupes[idx].nom) - 1] = '\0';
+    /* Stocker le nom du créateur comme modérateur */
+    strncpy(g_groupes[idx].moderateurName, msgReq->Emetteur, ISY_TAILLE_NOM - 1);
+    g_groupes[idx].moderateurName[ISY_TAILLE_NOM - 1] = '\0';
 
     if (lancer_groupe_process(idx) < 0) {
         g_groupes[idx].actif = 0;
@@ -204,6 +213,67 @@ int main(void)
             traiter_liste_groupes(&msgRep);
         } else if (strcmp(msgReq.Ordre, "JNG") == 0) {
             traiter_join_groupe(&msgReq, &msgRep);
+        } else if (strcmp(msgReq.Ordre, "DEL") == 0) {
+            /* Demande de suppression de groupe : msgReq->Texte = nom groupe */
+            int idx = trouver_groupe_par_nom(msgReq.Texte);
+            if (idx < 0 || !g_groupes[idx].actif) {
+                snprintf(msgRep.Ordre, ISY_TAILLE_ORDRE, "ERR");
+                snprintf(msgRep.Texte, ISY_TAILLE_TEXTE,
+                         "Groupe '%s' introuvable", msgReq.Texte);
+            } else if (strncmp(g_groupes[idx].moderateurName, msgReq.Emetteur, ISY_TAILLE_NOM) != 0) {
+                snprintf(msgRep.Ordre, ISY_TAILLE_ORDRE, "ERR");
+                snprintf(msgRep.Texte, ISY_TAILLE_TEXTE,
+                         "Seul le moderateur peut supprimer ce groupe");
+            } else {
+                /* tuer le processus de groupe */
+                if (g_groupes[idx].pid > 0) {
+                    kill(g_groupes[idx].pid, SIGINT);
+                }
+                /* désactiver l'entrée */
+                g_groupes[idx].actif = 0;
+                g_groupes[idx].port = 0;
+                g_groupes[idx].nom[0] = '\0';
+                g_groupes[idx].moderateurName[0] = '\0';
+                g_groupes[idx].pid = 0;
+                snprintf(msgRep.Ordre, ISY_TAILLE_ORDRE, "ACK");
+                snprintf(msgRep.Texte, ISY_TAILLE_TEXTE,
+                         "Groupe '%s' supprime", msgReq.Texte);
+            }
+        } else if (strcmp(msgReq.Ordre, "FUS") == 0) {
+            /* Demande de fusion : msgReq->Texte = nomG1 nomG2 (séparés par espace) */
+            char g1[32], g2[32];
+            if (sscanf(msgReq.Texte, "%31s %31s", g1, g2) != 2) {
+                snprintf(msgRep.Ordre, ISY_TAILLE_ORDRE, "ERR");
+                snprintf(msgRep.Texte, ISY_TAILLE_TEXTE,
+                         "Format fusion invalide");
+            } else {
+                int idx1 = trouver_groupe_par_nom(g1);
+                int idx2 = trouver_groupe_par_nom(g2);
+                if (idx1 < 0 || idx2 < 0 || !g_groupes[idx1].actif || !g_groupes[idx2].actif) {
+                    snprintf(msgRep.Ordre, ISY_TAILLE_ORDRE, "ERR");
+                    snprintf(msgRep.Texte, ISY_TAILLE_TEXTE,
+                             "Groupes introuvables pour fusion");
+                } else if (strncmp(g_groupes[idx1].moderateurName, msgReq.Emetteur, ISY_TAILLE_NOM) != 0) {
+                    snprintf(msgRep.Ordre, ISY_TAILLE_ORDRE, "ERR");
+                    snprintf(msgRep.Texte, ISY_TAILLE_TEXTE,
+                             "Seul le moderateur peut fusionner");
+                } else {
+                    /* Ici on choisit de fusionner g2 dans g1 : on supprime g2 et on envoie un message de fusion aux membres.
+                       Comme nous ne disposons pas des membres ici (ils sont dans GroupeISY), nous nous contentons de désactiver g2.
+                    */
+                    if (g_groupes[idx2].pid > 0) {
+                        kill(g_groupes[idx2].pid, SIGINT);
+                    }
+                    g_groupes[idx2].actif = 0;
+                    g_groupes[idx2].port = 0;
+                    g_groupes[idx2].nom[0] = '\0';
+                    g_groupes[idx2].moderateurName[0] = '\0';
+                    g_groupes[idx2].pid = 0;
+                    snprintf(msgRep.Ordre, ISY_TAILLE_ORDRE, "ACK");
+                    snprintf(msgRep.Texte, ISY_TAILLE_TEXTE,
+                             "Groupes '%s' et '%s' fusionnes (membres de %s doivent se reconnecter)", g1, g2, g1);
+                }
+            }
         } else {
             snprintf(msgRep.Ordre, ISY_TAILLE_ORDRE, "ERR");
             snprintf(msgRep.Texte, ISY_TAILLE_TEXTE,
