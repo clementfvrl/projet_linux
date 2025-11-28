@@ -1,6 +1,6 @@
 <mxfile host="Electron" agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) draw.io/29.0.3 Chrome/140.0.7339.249 Electron/38.7.0 Safari/537.36" version="29.0.3">
   <diagram id="C5RBs43oDa-KdzZeNtuy" name="Page-1">
-    <mxGraphModel dx="1659" dy="2140" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="827" pageHeight="1169" math="0" shadow="0">
+    <mxGraphModel dx="806" dy="1640" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="827" pageHeight="1169" math="0" shadow="0">
       <root>
         <mxCell id="WIyWlLk6GJQsqaUBKTNV-0" />
         <mxCell id="WIyWlLk6GJQsqaUBKTNV-1" parent="WIyWlLk6GJQsqaUBKTNV-0" />
@@ -46,7 +46,7 @@
         <mxCell id="7-QHLsWLp3yUvy-TCQjK-66" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;" parent="WIyWlLk6GJQsqaUBKTNV-1" source="7-QHLsWLp3yUvy-TCQjK-62" target="7-QHLsWLp3yUvy-TCQjK-65" edge="1">
           <mxGeometry relative="1" as="geometry" />
         </mxCell>
-        <mxCell id="ZTjekb9HT0xRHt_fWVan-35" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;" parent="WIyWlLk6GJQsqaUBKTNV-1" source="7-QHLsWLp3yUvy-TCQjK-62" edge="1">
+        <mxCell id="ZTjekb9HT0xRHt_fWVan-35" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" parent="WIyWlLk6GJQsqaUBKTNV-1" source="7-QHLsWLp3yUvy-TCQjK-62" edge="1" target="BopsNIYaTptSX1YydlFY-2">
           <mxGeometry relative="1" as="geometry">
             <mxPoint x="1721" y="825" as="targetPoint" />
           </mxGeometry>
@@ -170,6 +170,11 @@
         </mxCell>
         <mxCell id="XZ7Zvyxr22lXnz5QsfvR-59" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;" parent="WIyWlLk6GJQsqaUBKTNV-1" source="XZ7Zvyxr22lXnz5QsfvR-60" target="XZ7Zvyxr22lXnz5QsfvR-75" edge="1">
           <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="TPgT5hjrHIxLAA196Fbq-23" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=0;exitY=0.5;exitDx=0;exitDy=0;" parent="WIyWlLk6GJQsqaUBKTNV-1" source="XZ7Zvyxr22lXnz5QsfvR-60" edge="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="590" y="1080" as="targetPoint" />
+          </mxGeometry>
         </mxCell>
         <mxCell id="XZ7Zvyxr22lXnz5QsfvR-60" value="Fusion des deux groupes" style="rounded=1;whiteSpace=wrap;html=1;" parent="WIyWlLk6GJQsqaUBKTNV-1" vertex="1">
           <mxGeometry x="627.5" y="1060" width="100" height="40" as="geometry" />
@@ -366,7 +371,7 @@
           <mxGeometry x="550" y="235" width="120" height="40" as="geometry" />
         </mxCell>
         <mxCell id="ZTjekb9HT0xRHt_fWVan-36" value="&lt;b&gt;Menu application&lt;/b&gt;" style="text;html=1;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;" parent="WIyWlLk6GJQsqaUBKTNV-1" vertex="1">
-          <mxGeometry x="1731" y="810" width="60" height="30" as="geometry" />
+          <mxGeometry x="1788" y="810" width="60" height="30" as="geometry" />
         </mxCell>
         <mxCell id="ZTjekb9HT0xRHt_fWVan-37" value="Statistiques des membres du groupe" style="rounded=1;whiteSpace=wrap;html=1;" parent="WIyWlLk6GJQsqaUBKTNV-1" vertex="1">
           <mxGeometry x="1310" y="872" width="120" height="42.5" as="geometry" />
@@ -458,6 +463,12 @@
         </mxCell>
         <mxCell id="TPgT5hjrHIxLAA196Fbq-29" value="MàJ des données enregistrées" style="text;html=1;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontStyle=0" parent="WIyWlLk6GJQsqaUBKTNV-1" vertex="1">
           <mxGeometry x="1280" y="670" width="72.5" height="30" as="geometry" />
+        </mxCell>
+        <mxCell id="BopsNIYaTptSX1YydlFY-4" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;" edge="1" parent="WIyWlLk6GJQsqaUBKTNV-1" source="BopsNIYaTptSX1YydlFY-2" target="ZTjekb9HT0xRHt_fWVan-36">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="BopsNIYaTptSX1YydlFY-2" value="Notification des membres" style="rounded=1;whiteSpace=wrap;html=1;" vertex="1" parent="WIyWlLk6GJQsqaUBKTNV-1">
+          <mxGeometry x="1691" y="792.5" width="80" height="65.5" as="geometry" />
         </mxCell>
       </root>
     </mxGraphModel>
