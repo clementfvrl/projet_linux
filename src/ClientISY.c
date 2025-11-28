@@ -57,10 +57,38 @@ static void lancer_affichage(int portGroupe)
         return;
     }
     if (pid == 0) {
+        /* Processus fils : lance AffichageISY dans un nouveau terminal */
         char portStr[16];
         snprintf(portStr, sizeof(portStr), "%d", portGroupe);
-        execl("./bin/AffichageISY", "AffichageISY", portStr, (char *)NULL);
-        perror("execl AffichageISY");
+        
+        char cwd[1024];
+        if (getcwd(cwd, sizeof(cwd)) == NULL) {
+            perror("getcwd");
+            exit(EXIT_FAILURE);
+        }
+
+        /* Commande shell complète (doit être exécutée par un shell) */
+        char shell_command[1024 + 128]; 
+        snprintf(shell_command, sizeof(shell_command), "cd %s && ./bin/AffichageISY %s", cwd, portStr);
+
+        /* On utilise "/bin/bash", "-c", "<commande_shell>" pour garantir que la chaîne est interprétée par un shell */
+
+        // --- Tente de lancer avec ptyxis ---
+        execlp("ptyxis", "ptyxis", 
+               "--title", "AffichageISY", 
+               "-e", "/bin/bash", "-c", shell_command, // AJUSTEMENT: On passe /bin/bash -c comme commande d'exécution
+               (char *)NULL);
+        
+        // --- Si ptyxis échoue, tente de lancer avec gnome-terminal ---
+        execlp("gnome-terminal", "gnome-terminal", 
+               "--title=AffichageISY", 
+               "--", 
+               "/bin/bash", "-c", shell_command, 
+               (char *)NULL);
+
+        /* Si execlp retourne, c'est que ni ptyxis ni gnome-terminal n'a été trouvé */
+        perror("execlp (ptyxis/gnome-terminal) : Lancement du terminal separe echoue");
+        fprintf(stderr, "Erreur : Assurez-vous que ptyxis ou gnome-terminal est installe et dans le PATH.\n");
         exit(EXIT_FAILURE);
     }
     g_pidAffichage = pid;
