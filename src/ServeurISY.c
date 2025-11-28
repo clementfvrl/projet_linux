@@ -55,7 +55,7 @@ static int lancer_groupe_process(int idGroupe)
         char portStr[16];
         snprintf(portStr, sizeof(portStr), "%d", g_groupes[idGroupe].port);
         /* Passer aussi le nom du modérateur en argument */
-        execl("./GroupeISY", "GroupeISY", portStr, g_groupes[idGroupe].moderateurName, (char *)NULL);
+        execl("./bin/GroupeISY", "GroupeISY", portStr, g_groupes[idGroupe].moderateurName, (char *)NULL);
         perror("execl GroupeISY");
         exit(EXIT_FAILURE);
     }
