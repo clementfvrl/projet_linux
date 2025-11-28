@@ -59,7 +59,7 @@ static void lancer_affichage(int portGroupe)
     if (pid == 0) {
         char portStr[16];
         snprintf(portStr, sizeof(portStr), "%d", portGroupe);
-        execl("./AffichageISY", "AffichageISY", portStr, (char *)NULL);
+        execl("./bin/AffichageISY", "AffichageISY", portStr, (char *)NULL);
         perror("execl AffichageISY");
         exit(EXIT_FAILURE);
     }
