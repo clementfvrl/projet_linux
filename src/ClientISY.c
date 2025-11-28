@@ -3,7 +3,7 @@
  * Rôle   : Client ISY (menu + logique)
  *********************************************/
 
-#include "Commun.h"
+#include "commun.h"
 
 static int sock_client = -1;
 static struct sockaddr_in addrServeur;

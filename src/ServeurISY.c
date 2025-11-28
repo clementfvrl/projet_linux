@@ -3,7 +3,7 @@
  * Rôle   : Serveur principal ISY
  *********************************************/
 
-#include "Commun.h"
+#include "commun.h"
 #include <signal.h>
 
 

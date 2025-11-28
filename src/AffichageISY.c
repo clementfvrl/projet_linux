@@ -3,7 +3,7 @@
  * Rôle   : Affichage des messages d’un groupe
  *********************************************/
 
-#include "Commun.h"
+#include "commun.h"
 
 int main(int argc, char *argv[])
 {

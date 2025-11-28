@@ -3,7 +3,7 @@
  * Rôle   : Processus de groupe ISY
  *********************************************/
 
-#include "Commun.h"
+#include "commun.h"
 #include <strings.h>
 
 static int sock_groupe = -1;
