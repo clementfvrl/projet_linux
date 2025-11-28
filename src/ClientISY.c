@@ -323,11 +323,27 @@ static void afficher_menu(void)
     printf("Votre choix : ");
 }
 
-int main(int argc, char *argv[])
+int main(void)
 {
-    if (argc >= 2) {
-        strncpy(g_nomUtilisateur, argv[1], ISY_TAILLE_NOM - 1);
-        g_nomUtilisateur[ISY_TAILLE_NOM - 1] = '\0';
+	printf("Entrez votre nom d'utilisateur (max %d caracteres) : ", ISY_TAILLE_NOM - 1);
+    char input[ISY_TAILLE_NOM]; 
+    
+    if (fgets(input, sizeof(input), stdin) != NULL) {
+        input[strcspn(input, "\n")] = '\0';
+        
+        if (input[0] != '\0') {
+            // Copie dans la variable globale (sécurisée)
+            strncpy(g_nomUtilisateur, input, ISY_TAILLE_NOM - 1);
+            g_nomUtilisateur[ISY_TAILLE_NOM - 1] = '\0';
+        } else {
+            // Si l'utilisateur entre une ligne vide, force l'arrêt.
+            // On pourrait aussi utiliser la valeur par défaut, mais une saisie vide est souvent une erreur ou un arrêt.
+            fprintf(stderr, "Nom d'utilisateur vide. Abandon.\n");
+            return 1; // Quitte le programme avec un code d'erreur
+        }
+    } else {
+        fprintf(stderr, "Erreur de lecture. Abandon.\n");
+        return 1;
     }
 
     sock_client = creer_socket_udp();
