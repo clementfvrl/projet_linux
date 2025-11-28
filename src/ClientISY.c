@@ -323,28 +323,67 @@ static void afficher_menu(void)
     printf("Votre choix : ");
 }
 
+/* --- AJOUT : Gestion de la connexion au démarrage --- */
+static int login_au_serveur(void)
+{
+    MessageISY req, rep;
+    memset(&req, 0, sizeof(req));
+    memset(&rep, 0, sizeof(rep));
+
+    strncpy(req.Ordre, "CON", ISY_TAILLE_ORDRE - 1);
+    strncpy(req.Emetteur, g_nomUtilisateur, ISY_TAILLE_NOM - 1);
+
+    // On utilise la fonction existante pour l'échange
+    envoyer_message_serveur(&req, &rep);
+
+    // Analyse de la réponse
+    if (strcmp(rep.Texte, "OK") == 0) {
+        printf("Connexion reussie ! Bienvenue %s.\n", g_nomUtilisateur);
+        return 1; // Succès
+    } else if (strcmp(rep.Texte, "KO") == 0) {
+        printf("Erreur : Le pseudo '%s' est deja utilise.\n", g_nomUtilisateur);
+        return 0; // Échec
+    } else if (strcmp(rep.Texte, "FULL") == 0) {
+        printf("Erreur : Le serveur est complet.\n");
+        return 0; // Échec
+    } else {
+        printf("Erreur inconnue lors de la connexion : %s\n", rep.Texte);
+        return 0;
+    }
+}
+
+/* --- AJOUT : Gestion de la déconnexion à la fermeture --- */
+static void logout_du_serveur(void)
+{
+    MessageISY req, rep;
+    memset(&req, 0, sizeof(req));
+    memset(&rep, 0, sizeof(rep));
+
+    strncpy(req.Ordre, "DEC", ISY_TAILLE_ORDRE - 1);
+    strncpy(req.Emetteur, g_nomUtilisateur, ISY_TAILLE_NOM - 1);
+
+    envoyer_message_serveur(&req, &rep);
+    printf("Deconnexion : %s\n", rep.Texte);
+}
+
+/* --- AJOUT : Fonctions esthétiques --- */
+static void nettoyer_ecran(void)
+{
+    /* Séquence ANSI pour effacer l'écran et remettre le curseur en haut à gauche */
+    printf("\033[H\033[J");
+}
+
+static void pause_console(void)
+{
+    printf("\nAppuyez sur [Entree] pour continuer...");
+    char buf[16];
+    fgets(buf, sizeof(buf), stdin);
+}
+
 int main(void)
 {
-	printf("Entrez votre nom d'utilisateur (max %d caracteres) : ", ISY_TAILLE_NOM - 1);
-    char input[ISY_TAILLE_NOM]; 
-    
-    if (fgets(input, sizeof(input), stdin) != NULL) {
-        input[strcspn(input, "\n")] = '\0';
-        
-        if (input[0] != '\0') {
-            // Copie dans la variable globale (sécurisée)
-            strncpy(g_nomUtilisateur, input, ISY_TAILLE_NOM - 1);
-            g_nomUtilisateur[ISY_TAILLE_NOM - 1] = '\0';
-        } else {
-            // Si l'utilisateur entre une ligne vide, force l'arrêt.
-            // On pourrait aussi utiliser la valeur par défaut, mais une saisie vide est souvent une erreur ou un arrêt.
-            fprintf(stderr, "Nom d'utilisateur vide. Abandon.\n");
-            return 1; // Quitte le programme avec un code d'erreur
-        }
-    } else {
-        fprintf(stderr, "Erreur de lecture. Abandon.\n");
-        return 1;
-    }
+    /* Nettoyage au démarrage */
+    nettoyer_ecran();
 
     sock_client = creer_socket_udp();
     if (sock_client < 0) {
@@ -352,35 +391,115 @@ int main(void)
     }
 
     init_sockaddr(&addrServeur, ISY_IP_SERVEUR, ISY_PORT_SERVEUR);
-    printf("ClientISY lance en tant que '%s'\n", g_nomUtilisateur);
+
+    int connecte = 0;
+    char input[ISY_TAILLE_NOM]; 
+
+    printf("=== BIENVENUE SUR ISY ===\n\n");
+
+    /* Boucle de connexion */
+    while (!connecte) {
+        printf("Entrez votre nom d'utilisateur : ");
+        
+        if (fgets(input, sizeof(input), stdin) == NULL) {
+            printf("\nArret demande.\n");
+            fermer_socket_udp(sock_client);
+            return 0;
+        }
+
+        input[strcspn(input, "\n")] = '\0';
+
+        if (input[0] == '\0') {
+            printf(">> Le nom ne peut pas etre vide.\n");
+            continue;
+        }
+
+        strncpy(g_nomUtilisateur, input, ISY_TAILLE_NOM - 1);
+        g_nomUtilisateur[ISY_TAILLE_NOM - 1] = '\0';
+
+        if (login_au_serveur()) {
+            connecte = 1;
+            /* Petit délai ou pause pour voir le message "Connexion réussie" */
+            pause_console(); 
+        } else {
+            printf(">> Veuillez réessayer.\n\n");
+            /* On attend que l'utilisateur lise l'erreur avant de nettoyer */
+            pause_console();
+            nettoyer_ecran();
+            printf("=== BIENVENUE SUR ISY ===\n\n");
+        }
+    }
 
     int choix = -1;
     char ligne[16];
 
+    /* Boucle du Menu Principal */
     while (1) {
-        afficher_menu();
+        /* On nettoie l'écran à chaque retour au menu pour avoir un affichage propre */
+        nettoyer_ecran();
+        
+        printf("Utilisateur : %s\n", g_nomUtilisateur);
+        afficher_menu(); // Affiche la liste des choix
+        
         if (fgets(ligne, sizeof(ligne), stdin) == NULL) break;
         if (sscanf(ligne, "%d", &choix) != 1) continue;
 
+        /* Traitement du choix */
+        /* Pour les actions (1, 2, 6, 7), on fait l'action PUIS on pause pour laisser lire */
         switch (choix) {
             case 0:
-                printf("Fin du client.\n");
-                arreter_affichage();
+                logout_du_serveur();
                 fermer_socket_udp(sock_client);
+                arreter_affichage();
+                printf("Fin du programme.\n");
                 return 0;
-            case 1: action_creer_groupe();      break;
-            case 2: action_lister_groupes();    break;
-            case 3: action_rejoindre_groupe();  break;
-            case 4: action_dialoguer_groupe();  break;
-            case 5: action_quitter_groupe();    break;
-            case 6: action_supprimer_groupe();  break;
-            case 7: action_fusion_groupes();    break;
+
+            case 1: 
+                action_creer_groupe();   
+                pause_console(); // Attendre pour lire "Groupe créé"
+                break;
+            
+            case 2: 
+                action_lister_groupes(); 
+                pause_console(); // Attendre pour lire la liste
+                break;
+            
+            case 3: 
+                action_rejoindre_groupe(); 
+                pause_console(); 
+                break;
+            
+            case 4: 
+                /* Le dialogue a sa propre logique d'affichage, on nettoie avant d'entrer */
+                nettoyer_ecran();
+                printf("--- MODE CHAT (Tapez 'cmd' pour options, ligne vide pour quitter) ---\n");
+                action_dialoguer_groupe();  
+                /* Pas besoin de pause ici, quand on quitte le chat, on veut revenir au menu direct */
+                break;
+            
+            case 5: 
+                action_quitter_groupe(); 
+                pause_console();
+                break;
+            
+            case 6: 
+                action_supprimer_groupe(); 
+                pause_console();
+                break;
+            
+            case 7: 
+                action_fusion_groupes();   
+                pause_console();
+                break;
+            
             default:
                 printf("Choix invalide.\n");
+                pause_console();
         }
     }
 
     arreter_affichage();
+    logout_du_serveur();
     fermer_socket_udp(sock_client);
     return 0;
 }

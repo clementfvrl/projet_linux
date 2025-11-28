@@ -6,6 +6,13 @@
 #include "commun.h"
 #include <signal.h>
 
+struct UserInfo {
+    char nom[ISY_TAILLE_NOM];
+    int  actif; // 0 = inactif, 1 = actif 
+};
+
+/* CORRECTION 1 : Ajout de 'struct' devant UserInfo */
+static struct UserInfo g_users[ISY_MAX_MEMBRES]; 
 
 static int sock_serveur = -1;
 static GroupeServeur g_groupes[ISY_MAX_GROUPES];
@@ -14,7 +21,7 @@ static void init_groupes(void)
 {
     for (int i = 0; i < ISY_MAX_GROUPES; ++i) {
         g_groupes[i].actif = 0;
-        g_groupes[i].id    = i;
+        g_groupes[i].id = i;
         g_groupes[i].port  = 0;
         g_groupes[i].nom[0] = '\0';
         g_groupes[i].pid = 0;
@@ -171,6 +178,8 @@ int main(void)
     signal(SIGINT, sigint_handler);
 
     init_groupes();
+    /* --- AJOUT : Initialisation du tableau des utilisateurs à 0 --- */
+    memset(&g_users, 0, sizeof(g_users));
 
     sock_serveur = creer_socket_udp();
     if (sock_serveur < 0) {
@@ -207,7 +216,49 @@ int main(void)
         memset(&msgRep, 0, sizeof(msgRep));
         strncpy(msgRep.Emetteur, "Serveur", ISY_TAILLE_NOM - 1);
 
-        if (strcmp(msgReq.Ordre, "CRG") == 0) {
+        /* --- AJOUT : Logique de Connexion (CON) --- */
+        if (strcmp(msgReq.Ordre, "CON") == 0) {
+            int existe = 0;
+            int libre_idx = -1;
+
+            /* Vérification unicité */
+            for (int i = 0; i < ISY_MAX_MEMBRES; i++) {
+                if (g_users[i].actif && strncmp(g_users[i].nom, msgReq.Emetteur, ISY_TAILLE_NOM) == 0) {
+                    existe = 1;
+                }
+                if (!g_users[i].actif && libre_idx == -1) {
+                    libre_idx = i;
+                }
+            }
+
+            snprintf(msgRep.Ordre, ISY_TAILLE_ORDRE, "REP");
+            
+            if (existe) {
+                snprintf(msgRep.Texte, ISY_TAILLE_TEXTE, "KO"); /* Pseudo déjà pris */
+            } else if (libre_idx != -1) {
+                /* Enregistrement */
+                g_users[libre_idx].actif = 1;
+                strncpy(g_users[libre_idx].nom, msgReq.Emetteur, ISY_TAILLE_NOM - 1);
+                snprintf(msgRep.Texte, ISY_TAILLE_TEXTE, "OK");
+                printf("Nouvel utilisateur connecte : %s\n", msgReq.Emetteur);
+            } else {
+                snprintf(msgRep.Texte, ISY_TAILLE_TEXTE, "FULL"); /* Serveur plein */
+            }
+        
+        /* --- AJOUT : Logique de Déconnexion (DEC) --- */
+        } else if (strcmp(msgReq.Ordre, "DEC") == 0) {
+            for (int i = 0; i < ISY_MAX_MEMBRES; i++) {
+                if (g_users[i].actif && strncmp(g_users[i].nom, msgReq.Emetteur, ISY_TAILLE_NOM) == 0) {
+                    g_users[i].actif = 0;
+                    printf("Utilisateur deconnecte : %s\n", msgReq.Emetteur);
+                    break;
+                }
+            }
+            snprintf(msgRep.Ordre, ISY_TAILLE_ORDRE, "ACK");
+            snprintf(msgRep.Texte, ISY_TAILLE_TEXTE, "Au revoir");
+
+        /* CORRECTION 3 : Ajout du 'else' et fermeture de l'accolade manquante */
+        } else if (strcmp(msgReq.Ordre, "CRG") == 0) {
             traiter_creation_groupe(&msgReq, &msgRep);
         } else if (strcmp(msgReq.Ordre, "LST") == 0) {
             traiter_liste_groupes(&msgRep);
@@ -258,9 +309,7 @@ int main(void)
                     snprintf(msgRep.Texte, ISY_TAILLE_TEXTE,
                              "Seul le moderateur peut fusionner");
                 } else {
-                    /* Ici on choisit de fusionner g2 dans g1 : on supprime g2 et on envoie un message de fusion aux membres.
-                       Comme nous ne disposons pas des membres ici (ils sont dans GroupeISY), nous nous contentons de désactiver g2.
-                    */
+                    /* Fusion de g2 dans g1 */
                     if (g_groupes[idx2].pid > 0) {
                         kill(g_groupes[idx2].pid, SIGINT);
                     }
