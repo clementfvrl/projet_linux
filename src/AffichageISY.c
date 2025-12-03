@@ -5,69 +5,76 @@
 
 #include "commun.h"
 
+/* ... includes ... */
+
 int main(int argc, char *argv[])
 {
-    if (argc < 2) {
-        fprintf(stderr, "Usage: AffichageISY <portGroupe>\n");
+    /* 1. On vérifie qu'on a bien 2 arguments : port et nom */
+    if (argc < 3) {
+        fprintf(stderr, "Usage: AffichageISY <portGroupe> <nomUtilisateur>\n");
         exit(EXIT_FAILURE);
     }
 
     int portGroupe = atoi(argv[1]);
-    printf("AffichageISY : inscription sur le groupe (port %d)\n", portGroupe);
+    char *monNom = argv[2]; /* On récupère le nom passé en paramètre */
+
+    printf("AffichageISY : inscription sur le port %d pour %s\n", portGroupe, monNom);
 
     int sock = creer_socket_udp();
-    if (sock < 0) {
-        exit(EXIT_FAILURE);
-    }
+    if (sock < 0) exit(EXIT_FAILURE);
 
-    /* 1) Bind local sur port 0 pour laisser le noyau choisir un port libre */
     struct sockaddr_in addrLocal;
-    init_sockaddr(&addrLocal, ISY_IP_SERVEUR, 0);  // port 0 = auto
+    init_sockaddr(&addrLocal, ISY_IP_SERVEUR, 0); 
     if (bind(sock, (struct sockaddr *)&addrLocal, sizeof(addrLocal)) < 0) {
         perror("bind AffichageISY");
-        fermer_socket_udp(sock);
         exit(EXIT_FAILURE);
     }
 
-    /* 2) Préparer l’adresse du GroupeISY (port fixe du groupe) */
     struct sockaddr_in addrGroupe;
     init_sockaddr(&addrGroupe, ISY_IP_SERVEUR, portGroupe);
 
-    /* 3) Envoyer un message de REGISTRATION au groupe pour s'inscrire */
+    /* Envoi de l'inscription */
     MessageISY reg;
     memset(&reg, 0, sizeof(reg));
     snprintf(reg.Ordre, ISY_TAILLE_ORDRE, "REG");
-    snprintf(reg.Emetteur, ISY_TAILLE_NOM, "Affichage");  // ou autre
+    /* C'est plus propre d'utiliser le vrai nom ici aussi, même si facultatif */
+    snprintf(reg.Emetteur, ISY_TAILLE_NOM, "%s", monNom); 
 
-    if (sendto(sock, &reg, sizeof(reg), 0,
-               (struct sockaddr *)&addrGroupe, sizeof(addrGroupe)) < 0) {
-        perror("sendto REG vers GroupeISY");
-        fermer_socket_udp(sock);
+    if (sendto(sock, &reg, sizeof(reg), 0, (struct sockaddr *)&addrGroupe, sizeof(addrGroupe)) < 0) {
+        perror("sendto REG");
         exit(EXIT_FAILURE);
     }
 
     printf("AffichageISY : inscrit, attente des messages...\n");
 
-    /* 4) Boucle de réception des messages MSG */
     MessageISY msg;
     struct sockaddr_in addrExp;
     socklen_t lenExp = sizeof(addrExp);
 
     while (1) {
-        ssize_t n = recvfrom(sock, &msg, sizeof(msg), 0,
-                             (struct sockaddr *)&addrExp, &lenExp);
-        if (n < 0) {
-            perror("recvfrom AffichageISY");
-            continue;
-        }
+        ssize_t n = recvfrom(sock, &msg, sizeof(msg), 0, (struct sockaddr *)&addrExp, &lenExp);
+        if (n < 0) continue;
 
         msg.Ordre[ISY_TAILLE_ORDRE - 1]  = '\0';
         msg.Emetteur[ISY_TAILLE_NOM - 1] = '\0';
         msg.Texte[ISY_TAILLE_TEXTE - 1]  = '\0';
 
         if (strcmp(msg.Ordre, "MSG") == 0) {
-            printf("Message de %s : %s\n", msg.Emetteur, msg.Texte);
+            /* 2. LA LOGIQUE D'AFFICHAGE "MOI" EST ICI */
+            
+            if (strcmp(msg.Emetteur, monNom) == 0) {
+                /* Si l'émetteur est identique à mon nom */
+                printf("[Moi] : %s\n", msg.Texte);
+            } else {
+                /* Sinon, c'est quelqu'un d'autre */
+                printf("[%s] : %s\n", msg.Emetteur, msg.Texte);
+            }
             fflush(stdout);
+        }
+        else if (strcmp(msg.Ordre, "FIN") == 0) {
+            printf("--- Le groupe a été fermé par le modérateur ---\n");
+            printf("Fermeture automatique...\n");
+            break; /* On sort de la boucle while(1), donc le programme s'arrête */
         }
     }
 

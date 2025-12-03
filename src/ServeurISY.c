@@ -265,30 +265,34 @@ int main(void)
         } else if (strcmp(msgReq.Ordre, "JNG") == 0) {
             traiter_join_groupe(&msgReq, &msgRep);
         } else if (strcmp(msgReq.Ordre, "DEL") == 0) {
-            /* Demande de suppression de groupe : msgReq->Texte = nom groupe */
+            /* Demande de suppression de groupe */
             int idx = trouver_groupe_par_nom(msgReq.Texte);
+            
             if (idx < 0 || !g_groupes[idx].actif) {
                 snprintf(msgRep.Ordre, ISY_TAILLE_ORDRE, "ERR");
-                snprintf(msgRep.Texte, ISY_TAILLE_TEXTE,
-                         "Groupe '%s' introuvable", msgReq.Texte);
-            } else if (strncmp(g_groupes[idx].moderateurName, msgReq.Emetteur, ISY_TAILLE_NOM) != 0) {
+                snprintf(msgRep.Texte, ISY_TAILLE_TEXTE, "Groupe introuvable");
+            } 
+            else if (strncmp(g_groupes[idx].moderateurName, msgReq.Emetteur, ISY_TAILLE_NOM) != 0) {
                 snprintf(msgRep.Ordre, ISY_TAILLE_ORDRE, "ERR");
-                snprintf(msgRep.Texte, ISY_TAILLE_TEXTE,
-                         "Seul le moderateur peut supprimer ce groupe");
-            } else {
-                /* tuer le processus de groupe */
+                snprintf(msgRep.Texte, ISY_TAILLE_TEXTE, "Refuse : vous n'etes pas moderateur");
+            } 
+            else {
+                /* 1. Tuer le processus de groupe */
                 if (g_groupes[idx].pid > 0) {
                     kill(g_groupes[idx].pid, SIGINT);
+                    waitpid(g_groupes[idx].pid, NULL, 0); // Attendre la fin propre du fils pour éviter zombie
                 }
-                /* désactiver l'entrée */
+                
+                /* 2. Nettoyer la structure */
                 g_groupes[idx].actif = 0;
                 g_groupes[idx].port = 0;
                 g_groupes[idx].nom[0] = '\0';
                 g_groupes[idx].moderateurName[0] = '\0';
                 g_groupes[idx].pid = 0;
-                snprintf(msgRep.Ordre, ISY_TAILLE_ORDRE, "ACK");
-                snprintf(msgRep.Texte, ISY_TAILLE_TEXTE,
-                         "Groupe '%s' supprime", msgReq.Texte);
+
+                /* 3. REPONSE CRUCIALE : "OK" pour que le client ferme sa fenêtre */
+                snprintf(msgRep.Ordre, ISY_TAILLE_ORDRE, "OK");
+                snprintf(msgRep.Texte, ISY_TAILLE_TEXTE, "Groupe supprime");
             }
         } else if (strcmp(msgReq.Ordre, "FUS") == 0) {
             /* Demande de fusion : msgReq->Texte = nomG1 nomG2 (séparés par espace) */
@@ -312,6 +316,7 @@ int main(void)
                     /* Fusion de g2 dans g1 */
                     if (g_groupes[idx2].pid > 0) {
                         kill(g_groupes[idx2].pid, SIGINT);
+                        waitpid(g_groupes[idx2].pid, NULL, 0);
                     }
                     g_groupes[idx2].actif = 0;
                     g_groupes[idx2].port = 0;

@@ -9,6 +9,7 @@ static int sock_client = -1;
 static struct sockaddr_in addrServeur;
 
 /* Groupe courant (on simplifie à un seul groupe à la fois) */
+static char g_nomGroupeActif[ISY_TAILLE_TEXTE] = "";
 static int  g_portGroupeActif = 0;
 static pid_t g_pidAffichage   = 0;
 static char g_nomUtilisateur[ISY_TAILLE_NOM] = "user";
@@ -49,7 +50,8 @@ static void envoyer_message_serveur(const MessageISY *msgReq,
 }
 
 /* Lance AffichageISY sur le port du groupe */
-static void lancer_affichage(int portGroupe)
+/* Notez l'ajout de 'const char *nomClient' dans les paramètres */
+static void lancer_affichage(int portGroupe, const char *nomClient)
 {
     pid_t pid = fork();
     if (pid < 0) {
@@ -68,25 +70,24 @@ static void lancer_affichage(int portGroupe)
             exit(EXIT_FAILURE);
         }
 
-        /* Commande à exécuter dans le xterm */
-        char shell_command[1024 + 128]; 
-        snprintf(shell_command, sizeof(shell_command), "cd %s && ./bin/AffichageISY %s", cwd, portStr);
-
-        /* * Lancement de xterm
-         * -T : Titre de la fenêtre
-         * -e : Exécuter la commande (DOIT être la dernière option)
+        /* * Modification de la commande Shell pour inclure le nomClient 
+         * Exemple resultat : cd /home/user/projet && ./bin/AffichageISY 12345 "Paul"
          */
+        char shell_command[1024 + 128]; 
+        snprintf(shell_command, sizeof(shell_command), 
+                 "cd %s && ./bin/AffichageISY %s \"%s\"", 
+                 cwd, portStr, nomClient);
+
+        /* Lancement via xterm (ou gnome-terminal selon votre choix précédent) */
         execlp("xterm", "xterm", 
                "-T", "AffichageISY", 
                "-e", "/bin/bash", "-c", shell_command, 
                (char *)NULL);
 
-        perror("execlp xterm");
-        fprintf(stderr, "Erreur : xterm n'est pas installé (sudo apt install xterm)\n");
+        perror("execlp");
         exit(EXIT_FAILURE);
     }
     
-    /* Processus père : On sauvegarde le PID */
     g_pidAffichage = pid;
 }
 
@@ -150,15 +151,31 @@ static void action_rejoindre_groupe(void)
     if (fgets(req.Texte, ISY_TAILLE_TEXTE, stdin) == NULL) return;
     req.Texte[strcspn(req.Texte, "\n")] = '\0';
 
+    /* Copie temporaire du nom demandé */
+    char nomDemande[ISY_TAILLE_TEXTE];
+    strncpy(nomDemande, req.Texte, ISY_TAILLE_TEXTE - 1);
+    nomDemande[ISY_TAILLE_TEXTE - 1] = '\0';
+
     envoyer_message_serveur(&req, &rep);
 
     if (strcmp(rep.Ordre, "ACK") == 0) {
         /* rep.Texte = "OK <port>" */
         int port = 0;
         if (sscanf(rep.Texte, "OK %d", &port) == 1) {
+            
+            /* 1. Fermer l'ancienne fenêtre si elle existe */
+            arreter_affichage();
+
+            /* 2. Mettre à jour les variables globales */
             g_portGroupeActif = port;
-            printf("Rejoint groupe sur port %d\n", g_portGroupeActif);
-            lancer_affichage(g_portGroupeActif);
+            strncpy(g_nomGroupeActif, nomDemande, ISY_TAILLE_TEXTE - 1);
+            g_nomGroupeActif[ISY_TAILLE_TEXTE - 1] = '\0';
+
+            printf("Succès : Groupe '%s' rejoint sur le port %d\n", g_nomGroupeActif, g_portGroupeActif);
+            
+            /* 3. Lancer la fenêtre avec le port ET le nom utilisateur */
+            lancer_affichage(g_portGroupeActif, g_nomUtilisateur);
+
         } else {
             printf("Reponse ACK mal formee : %s\n", rep.Texte);
         }
@@ -277,9 +294,33 @@ static void action_supprimer_groupe(void)
     req.Texte[strcspn(req.Texte, "\n")] = '\0';
     if (req.Texte[0] == '\0') return;
 
+    /* On sauvegarde le nom visé pour le comparer plus tard */
+    char groupeVise[ISY_TAILLE_TEXTE];
+    strncpy(groupeVise, req.Texte, ISY_TAILLE_TEXTE - 1);
+    groupeVise[ISY_TAILLE_TEXTE - 1] = '\0';
+
     envoyer_message_serveur(&req, &rep);
 
     printf("Reponse serveur : [%s] %s\n", rep.Ordre, rep.Texte);
+
+    /* --- MODIFICATION ICI --- */
+    
+    /* 1. On vérifie si le serveur a validé la suppression (Code "OK") */
+    if (strcmp(rep.Ordre, "OK") == 0) {
+        
+        /* 2. On vérifie si le groupe supprimé est celui actuellement ouvert */
+        /* Note : g_nomGroupeActuel doit être mis à jour dans votre fonction 'rejoindre_groupe' */
+        if (strcmp(groupeVise, g_nomGroupeActif) == 0) {
+            
+            printf("Le groupe courant a été supprimé. Fermeture de l'affichage...\n");
+            
+            /* On appelle la fonction d'arrêt qu'on a codée précédemment */
+            arreter_affichage();
+            
+            /* On nettoie la variable globale pour dire qu'on n'est plus nulle part */
+            memset(g_nomGroupeActif, 0, sizeof(g_nomGroupeActif));
+        }
+    }
 }
 
 /* Fusionner deux groupes : saisir nom1 et nom2 et envoyer au serveur */

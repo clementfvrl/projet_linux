@@ -5,6 +5,8 @@
 
 #include "commun.h"
 #include <strings.h>
+#include <signal.h>  
+#include <unistd.h>  
 
 static int sock_groupe = -1;
 static int g_portGroupe = 0;
@@ -81,6 +83,37 @@ static void redistribuer_message(const MessageISY *msg,
     (void)addrEmetteur;
 }
 
+/* Fonction appelée quand le Serveur envoie SIGINT (Kill) */
+static void arret_groupe(int sig)
+{
+    (void)sig; /* Evite le warning */
+
+    MessageISY msgFin;
+    memset(&msgFin, 0, sizeof(msgFin));
+    /* On prépare le message "FIN" */
+    strncpy(msgFin.Ordre, "FIN", ISY_TAILLE_ORDRE - 1);
+    strncpy(msgFin.Emetteur, "SYSTEM", ISY_TAILLE_NOM - 1);
+    strncpy(msgFin.Texte, "Groupe dissous par le moderateur", ISY_TAILLE_TEXTE - 1);
+
+    printf("\nGroupeISY : Fermeture demandée. Envoi de FIN aux membres...\n");
+
+    /* On parcourt tous les membres actifs pour leur dire au revoir */
+    for (int i = 0; i < ISY_MAX_MEMBRES; ++i) {
+        if (g_membres[i].actif) {
+            sendto(sock_groupe, &msgFin, sizeof(msgFin), 0,
+                   (struct sockaddr *)&g_membres[i].addr,
+                   sizeof(g_membres[i].addr));
+        }
+    }
+
+    /* Petite pause pour être sûr que les paquets réseau partent avant de couper */
+    usleep(100000); // 0.1 seconde
+
+    fermer_socket_udp(sock_groupe);
+    printf("GroupeISY : Arret terminé.\n");
+    exit(0);
+}
+
 /* ==== MAIN ==== */
 int main(int argc, char *argv[])
 {
@@ -93,6 +126,8 @@ int main(int argc, char *argv[])
     strncpy(g_moderateurName, argv[2], ISY_TAILLE_NOM - 1);
     g_moderateurName[ISY_TAILLE_NOM - 1] = '\0';
     printf("GroupeISY : lancement sur port %d (moderateur %s)\n", g_portGroupe, g_moderateurName);
+
+    signal(SIGINT, arret_groupe); /* Gestion de l'arrêt du groupe */
 
     init_membres();
 
