@@ -13,9 +13,14 @@ SRCS = $(SRC_DIR)/ServeurISY.c \
 
 OBJS = $(SRCS:$(SRC_DIR)/%.c=$(OBJ_DIR)/%.o)
 
-all: $(BIN_DIR)/ServeurISY $(BIN_DIR)/GroupeISY $(BIN_DIR)/ClientISY $(BIN_DIR)/AffichageISY
+# 1. La cible 'all' dépend maintenant de 'check-deps'
+all: check-deps $(BIN_DIR)/ServeurISY $(BIN_DIR)/GroupeISY $(BIN_DIR)/ClientISY $(BIN_DIR)/AffichageISY
 
-# CORRECTION : Ajout de '| $(BIN_DIR)' sur la même ligne pour l'ordonnancement
+# 2. La définition de la règle 'check-deps' (C'est ce qu'il vous manquait probablement)
+check-deps:
+	@which xterm > /dev/null 2>&1 || \
+	(echo "❌ ERREUR : 'xterm' est requis.\nVeuillez l'installer : sudo apt install xterm" && exit 1)
+
 $(BIN_DIR)/ServeurISY: $(OBJ_DIR)/ServeurISY.o | $(BIN_DIR)
 	$(CC) $(CFLAGS) -o $@ $^
 
@@ -40,4 +45,4 @@ $(BIN_DIR):
 clean:
 	rm -f $(OBJ_DIR)/*.o $(BIN_DIR)/ServeurISY $(BIN_DIR)/GroupeISY $(BIN_DIR)/ClientISY $(BIN_DIR)/AffichageISY
 
-.PHONY: all clean
+.PHONY: all clean check-deps

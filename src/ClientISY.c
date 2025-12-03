@@ -56,8 +56,9 @@ static void lancer_affichage(int portGroupe)
         perror("fork AffichageISY");
         return;
     }
+
     if (pid == 0) {
-        /* Processus fils : lance AffichageISY dans un nouveau terminal */
+        /* Processus fils */
         char portStr[16];
         snprintf(portStr, sizeof(portStr), "%d", portGroupe);
         
@@ -67,38 +68,37 @@ static void lancer_affichage(int portGroupe)
             exit(EXIT_FAILURE);
         }
 
-        /* Commande shell complète (doit être exécutée par un shell) */
+        /* Commande à exécuter dans le xterm */
         char shell_command[1024 + 128]; 
         snprintf(shell_command, sizeof(shell_command), "cd %s && ./bin/AffichageISY %s", cwd, portStr);
 
-        /* On utilise "/bin/bash", "-c", "<commande_shell>" pour garantir que la chaîne est interprétée par un shell */
-
-        // --- Tente de lancer avec ptyxis ---
-        execlp("ptyxis", "ptyxis", 
-               "--title", "AffichageISY", 
-               "-e", "/bin/bash", "-c", shell_command, // AJUSTEMENT: On passe /bin/bash -c comme commande d'exécution
-               (char *)NULL);
-        
-        // --- Si ptyxis échoue, tente de lancer avec gnome-terminal ---
-        execlp("gnome-terminal", "gnome-terminal", 
-               "--title=AffichageISY", 
-               "--", 
-               "/bin/bash", "-c", shell_command, 
+        /* * Lancement de xterm
+         * -T : Titre de la fenêtre
+         * -e : Exécuter la commande (DOIT être la dernière option)
+         */
+        execlp("xterm", "xterm", 
+               "-T", "AffichageISY", 
+               "-e", "/bin/bash", "-c", shell_command, 
                (char *)NULL);
 
-        /* Si execlp retourne, c'est que ni ptyxis ni gnome-terminal n'a été trouvé */
-        perror("execlp (ptyxis/gnome-terminal) : Lancement du terminal separe echoue");
-        fprintf(stderr, "Erreur : Assurez-vous que ptyxis ou gnome-terminal est installe et dans le PATH.\n");
+        perror("execlp xterm");
+        fprintf(stderr, "Erreur : xterm n'est pas installé (sudo apt install xterm)\n");
         exit(EXIT_FAILURE);
     }
+    
+    /* Processus père : On sauvegarde le PID */
     g_pidAffichage = pid;
 }
 
 static void arreter_affichage(void)
 {
     if (g_pidAffichage > 0) {
-        kill(g_pidAffichage, SIGINT);
-        /* on ne fait pas de waitpid ici, simplification */
+        /* Avec xterm, SIGTERM suffit généralement à fermer la fenêtre proprement */
+        kill(g_pidAffichage, SIGTERM);
+        
+        /* On attend la fin du processus pour éviter les zombies */
+        waitpid(g_pidAffichage, NULL, 0);
+        
         g_pidAffichage = 0;
     }
 }
