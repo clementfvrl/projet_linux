@@ -5,7 +5,7 @@
 
 #include "commun.h"
 #include <strings.h>
-#include <string.h>  /* Nécessaire pour strstr */
+#include <string.h> /* Nécessaire pour strstr */
 #include <signal.h>
 #include <unistd.h>
 #include <time.h>
@@ -52,7 +52,8 @@ static int trouver_slot_membre(void)
 {
     for (int i = 0; i < ISY_MAX_MEMBRES; ++i)
     {
-        if (!g_membres[i].actif) return i;
+        if (!g_membres[i].actif)
+            return i;
     }
     return -1;
 }
@@ -88,21 +89,26 @@ static int trouver_index_membre(const struct sockaddr_in *addr)
 static void ajouter_membre(const struct sockaddr_in *addr, const char *nom)
 {
     /* 1. Adresse exacte déjà connue ? */
-    if (adresse_deja_connue(addr)) return;
+    if (adresse_deja_connue(addr))
+        return;
 
     /* 2. Nom déjà connu ? (Mise à jour port) */
-    if (nom && nom[0] != '\0') {
-        for (int i = 0; i < ISY_MAX_MEMBRES; ++i) {
-            if (g_membres[i].actif && strcasecmp(g_membres[i].nom, nom) == 0) {
-                g_membres[i].addr = *addr; 
-                return; 
+    if (nom && nom[0] != '\0')
+    {
+        for (int i = 0; i < ISY_MAX_MEMBRES; ++i)
+        {
+            if (g_membres[i].actif && strcasecmp(g_membres[i].nom, nom) == 0)
+            {
+                g_membres[i].addr = *addr;
+                return;
             }
         }
     }
 
     /* 3. Nouveau membre */
     int idx = trouver_slot_membre();
-    if (idx < 0) return;
+    if (idx < 0)
+        return;
 
     g_membres[idx].actif = 1;
     g_membres[idx].addr = *addr;
@@ -142,12 +148,15 @@ static void redistribuer_message(const MessageISY *msg,
                        sizeof(g_membres[i].addr)) < 0)
             {
                 perror("sendto GroupeISY");
-            } else {
+            }
+            else
+            {
                 envoyes++;
             }
         }
     }
-    if(envoyes == 0) printf("⚠️ Personne n'a reçu le message (Avez-vous lancé l'Affichage ?)\n");
+    if (envoyes == 0)
+        printf("⚠️ Personne n'a reçu le message (Avez-vous lancé l'Affichage ?)\n");
 }
 
 static void arret_groupe(int sig)
@@ -168,7 +177,8 @@ static void arret_groupe(int sig)
                    sizeof(g_membres[i].addr));
         }
     }
-    usleep(100000); 
+    // usleep(100000);
+    sleep(0.1);
     fermer_socket_udp(sock_groupe);
     exit(0);
 }
@@ -191,7 +201,8 @@ int main(int argc, char *argv[])
     init_membres();
 
     sock_groupe = creer_socket_udp();
-    if (sock_groupe < 0) exit(EXIT_FAILURE);
+    if (sock_groupe < 0)
+        exit(EXIT_FAILURE);
 
     struct sockaddr_in addrG;
     init_sockaddr(&addrG, ISY_IP_SERVEUR, g_portGroupe);
@@ -210,7 +221,8 @@ int main(int argc, char *argv[])
     {
         ssize_t n = recvfrom(sock_groupe, &msg, sizeof(msg), 0,
                              (struct sockaddr *)&addrCli, &lenCli);
-        if (n < 0) continue;
+        if (n < 0)
+            continue;
 
         msg.Ordre[ISY_TAILLE_ORDRE - 1] = '\0';
         msg.Emetteur[ISY_TAILLE_NOM - 1] = '\0';
@@ -221,7 +233,7 @@ int main(int argc, char *argv[])
             /* On ajoute _Vue pour distinguer l'affichage technique */
             char nomVue[ISY_TAILLE_NOM];
             snprintf(nomVue, ISY_TAILLE_NOM, "%s_Vue", msg.Emetteur);
-            
+
             ajouter_membre(&addrCli, nomVue);
             printf("GroupeISY(port %d) : client affichage inscrit (%s)\n", g_portGroupe, nomVue);
         }
@@ -274,10 +286,11 @@ int main(int argc, char *argv[])
                     {
                         if (g_membres[i].actif && !g_membres[i].banni)
                         {
-                            /* --- FILTRAGE --- 
+                            /* --- FILTRAGE ---
                              * Si le nom contient "_Vue", c'est une fenêtre d'affichage, on cache.
                              */
-                            if (strstr(g_membres[i].nom, "_Vue") != NULL) {
+                            if (strstr(g_membres[i].nom, "_Vue") != NULL)
+                            {
                                 continue;
                             }
 
@@ -287,19 +300,21 @@ int main(int argc, char *argv[])
                                 strcat(rep.Texte, info);
                         }
                     }
-                    if (rep.Texte[0] == '\0') strcpy(rep.Texte, "Vide (ou que des Vues)\n");
+                    if (rep.Texte[0] == '\0')
+                        strcpy(rep.Texte, "Vide (ou que des Vues)\n");
                 }
                 else if (strncasecmp(cmd, "stats", 5) == 0)
                 {
                     snprintf(rep.Texte, ISY_TAILLE_TEXTE, "%-10s %-3s %-4s %-4s\n", "NOM", "NB", "TPS", "INT");
                     time_t now = time(NULL);
-                    
+
                     for (int i = 0; i < ISY_MAX_MEMBRES; ++i)
                     {
                         if (g_membres[i].actif && !g_membres[i].banni)
                         {
                             /* --- FILTRAGE AUSSI POUR STATS --- */
-                            if (strstr(g_membres[i].nom, "_Vue") != NULL) {
+                            if (strstr(g_membres[i].nom, "_Vue") != NULL)
+                            {
                                 continue;
                             }
 
@@ -336,11 +351,13 @@ int main(int argc, char *argv[])
                                 found = 1;
                             }
                         }
-                        if(found) snprintf(rep.Texte, ISY_TAILLE_TEXTE, "Banni: %s", nameStart);
-                        else snprintf(rep.Texte, ISY_TAILLE_TEXTE, "Inconnu: %s", nameStart);
+                        if (found)
+                            snprintf(rep.Texte, ISY_TAILLE_TEXTE, "Banni: %s", nameStart);
+                        else
+                            snprintf(rep.Texte, ISY_TAILLE_TEXTE, "Inconnu: %s", nameStart);
                     }
                 }
-                
+
                 sendto(sock_groupe, &rep, sizeof(rep), 0,
                        (struct sockaddr *)&addrCli, sizeof(addrCli));
             }
