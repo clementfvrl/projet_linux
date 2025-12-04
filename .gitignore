@@ -58,3 +58,6 @@ dkms.conf
 
 # Data
 data/
+
+# VS Code data
+.vscode
