@@ -10,8 +10,8 @@ static struct sockaddr_in addrServeur;
 
 /* Groupe courant (on simplifie à un seul groupe à la fois) */
 static char g_nomGroupeActif[ISY_TAILLE_TEXTE] = "";
-static int  g_portGroupeActif = 0;
-static pid_t g_pidAffichage   = 0;
+static int g_portGroupeActif = 0;
+static pid_t g_pidAffichage = 0;
 static char g_nomUtilisateur[ISY_TAILLE_NOM] = "user";
 
 /* ==== Fonctions utilitaires client ==== */
@@ -20,11 +20,9 @@ static void action_creer_groupe(void);
 static void action_lister_groupes(void);
 static void action_rejoindre_groupe(void);
 static void action_dialoguer_groupe(void);
-static void action_quitter_groupe(void);      
+static void action_quitter_groupe(void);
 static void action_supprimer_groupe(void);
 static void action_fusion_groupes(void);
-
-
 
 static void envoyer_message_serveur(const MessageISY *msgReq,
                                     MessageISY *msgRep)
@@ -32,21 +30,23 @@ static void envoyer_message_serveur(const MessageISY *msgReq,
     socklen_t lenServ = sizeof(addrServeur);
     ssize_t n = sendto(sock_client, msgReq, sizeof(*msgReq), 0,
                        (struct sockaddr *)&addrServeur, lenServ);
-    if (n < 0) {
+    if (n < 0)
+    {
         perror("sendto Client->Serveur");
         return;
     }
 
     n = recvfrom(sock_client, msgRep, sizeof(*msgRep), 0,
                  (struct sockaddr *)&addrServeur, &lenServ);
-    if (n < 0) {
+    if (n < 0)
+    {
         perror("recvfrom Serveur->Client");
         return;
     }
 
-    msgRep->Ordre[ISY_TAILLE_ORDRE - 1]  = '\0';
+    msgRep->Ordre[ISY_TAILLE_ORDRE - 1] = '\0';
     msgRep->Emetteur[ISY_TAILLE_NOM - 1] = '\0';
-    msgRep->Texte[ISY_TAILLE_TEXTE - 1]  = '\0';
+    msgRep->Texte[ISY_TAILLE_TEXTE - 1] = '\0';
 }
 
 /* Lance AffichageISY sur le port du groupe */
@@ -54,52 +54,56 @@ static void envoyer_message_serveur(const MessageISY *msgReq,
 static void lancer_affichage(int portGroupe, const char *nomClient)
 {
     pid_t pid = fork();
-    if (pid < 0) {
+    if (pid < 0)
+    {
         perror("fork AffichageISY");
         return;
     }
 
-    if (pid == 0) {
+    if (pid == 0)
+    {
         /* Processus fils */
         char portStr[16];
         snprintf(portStr, sizeof(portStr), "%d", portGroupe);
-        
+
         char cwd[1024];
-        if (getcwd(cwd, sizeof(cwd)) == NULL) {
+        if (getcwd(cwd, sizeof(cwd)) == NULL)
+        {
             perror("getcwd");
             exit(EXIT_FAILURE);
         }
 
-        /* * Modification de la commande Shell pour inclure le nomClient 
+        /* * Modification de la commande Shell pour inclure le nomClient
          * Exemple resultat : cd /home/user/projet && ./bin/AffichageISY 12345 "Paul"
          */
-        char shell_command[1024 + 128]; 
-        snprintf(shell_command, sizeof(shell_command), 
-                 "cd %s && ./bin/AffichageISY %s \"%s\"", 
+        char shell_command[1024 + 128];
+        snprintf(shell_command, sizeof(shell_command),
+                 "cd %s && ./bin/AffichageISY %s \"%s\"",
                  cwd, portStr, nomClient);
 
         /* Lancement via xterm (ou gnome-terminal selon votre choix précédent) */
-        execlp("xterm", "xterm", 
-               "-T", "AffichageISY", 
-               "-e", "/bin/bash", "-c", shell_command, 
+        execlp("xterm", "xterm",
+               "-T", "AffichageISY",
+               "-e", "/bin/bash", "-c", shell_command,
                (char *)NULL);
 
         perror("execlp");
         exit(EXIT_FAILURE);
     }
-    
+
     g_pidAffichage = pid;
 }
 
 static void arreter_affichage(void)
 {
-    if (g_pidAffichage > 0) {
+    if (g_pidAffichage > 0)
+    {
         /* Avec xterm, SIGTERM suffit généralement à fermer la fenêtre proprement */
         kill(g_pidAffichage, SIGTERM);
-        
+
         /* On attend la fin du processus pour éviter les zombies */
         waitpid(g_pidAffichage, NULL, 0);
-        
+
         g_pidAffichage = 0;
     }
 }
@@ -116,7 +120,8 @@ static void action_creer_groupe(void)
     strncpy(req.Emetteur, g_nomUtilisateur, ISY_TAILLE_NOM - 1);
 
     printf("Nom du groupe a creer : ");
-    if (fgets(req.Texte, ISY_TAILLE_TEXTE, stdin) == NULL) return;
+    if (fgets(req.Texte, ISY_TAILLE_TEXTE, stdin) == NULL)
+        return;
     req.Texte[strcspn(req.Texte, "\n")] = '\0';
 
     envoyer_message_serveur(&req, &rep);
@@ -148,7 +153,8 @@ static void action_rejoindre_groupe(void)
     strncpy(req.Emetteur, g_nomUtilisateur, ISY_TAILLE_NOM - 1);
 
     printf("Nom du groupe a rejoindre : ");
-    if (fgets(req.Texte, ISY_TAILLE_TEXTE, stdin) == NULL) return;
+    if (fgets(req.Texte, ISY_TAILLE_TEXTE, stdin) == NULL)
+        return;
     req.Texte[strcspn(req.Texte, "\n")] = '\0';
 
     /* Copie temporaire du nom demandé */
@@ -158,11 +164,13 @@ static void action_rejoindre_groupe(void)
 
     envoyer_message_serveur(&req, &rep);
 
-    if (strcmp(rep.Ordre, "ACK") == 0) {
+    if (strcmp(rep.Ordre, "ACK") == 0)
+    {
         /* rep.Texte = "OK <port>" */
         int port = 0;
-        if (sscanf(rep.Texte, "OK %d", &port) == 1) {
-            
+        if (sscanf(rep.Texte, "OK %d", &port) == 1)
+        {
+
             /* 1. Fermer l'ancienne fenêtre si elle existe */
             arreter_affichage();
 
@@ -172,27 +180,32 @@ static void action_rejoindre_groupe(void)
             g_nomGroupeActif[ISY_TAILLE_TEXTE - 1] = '\0';
 
             printf("Succès : Groupe '%s' rejoint sur le port %d\n", g_nomGroupeActif, g_portGroupeActif);
-            
+
             /* 3. Lancer la fenêtre avec le port ET le nom utilisateur */
             lancer_affichage(g_portGroupeActif, g_nomUtilisateur);
-
-        } else {
+        }
+        else
+        {
             printf("Reponse ACK mal formee : %s\n", rep.Texte);
         }
-    } else {
+    }
+    else
+    {
         printf("Erreur join : %s\n", rep.Texte);
     }
 }
 
 static void action_dialoguer_groupe(void)
 {
-    if (g_portGroupeActif == 0) {
+    if (g_portGroupeActif == 0)
+    {
         printf("Aucun groupe actif. Rejoindre un groupe d'abord.\n");
         return;
     }
 
     int sockG = creer_socket_udp();
-    if (sockG < 0) return;
+    if (sockG < 0)
+        return;
 
     struct sockaddr_in addrG;
     init_sockaddr(&addrG, ISY_IP_SERVEUR, g_portGroupeActif);
@@ -200,24 +213,33 @@ static void action_dialoguer_groupe(void)
     printf("Tapez vos messages (ligne vide pour revenir au menu)...\n");
 
     char buffer[ISY_TAILLE_TEXTE];
-    while (1) {
+    while (1)
+    {
         printf("Message : ");
-        if (fgets(buffer, sizeof(buffer), stdin) == NULL) break;
+        if (fgets(buffer, sizeof(buffer), stdin) == NULL)
+            break;
         buffer[strcspn(buffer, "\n")] = '\0';
-        if (buffer[0] == '\0') break;
+        if (buffer[0] == '\0')
+            break;
 
         /* Si l'utilisateur souhaite entrer en mode commande, tape "cmd" */
-        if (strcmp(buffer, "cmd") == 0) {
+        if (strcmp(buffer, "cmd") == 0)
+        {
             /* Boucle de commande jusqu'à ce que l'utilisateur tape "msg" */
-            while (1) {
+            while (1)
+            {
                 char cmdBuf[ISY_TAILLE_TEXTE];
                 printf("Commande : ");
-                if (fgets(cmdBuf, sizeof(cmdBuf), stdin) == NULL) break;
+                if (fgets(cmdBuf, sizeof(cmdBuf), stdin) == NULL)
+                    break;
                 cmdBuf[strcspn(cmdBuf, "\n")] = '\0';
-                if (strcmp(cmdBuf, "msg") == 0) {
+                if (strcmp(cmdBuf, "msg") == 0)
+                {
                     /* retour au chat */
                     break;
-                } else if (strcmp(cmdBuf, "quit") == 0) {
+                }
+                else if (strcmp(cmdBuf, "quit") == 0)
+                {
                     /* quitter complètement le groupe */
                     /* arrêter l'affichage et revenir au menu principal */
                     fermer_socket_udp(sockG);
@@ -231,7 +253,8 @@ static void action_dialoguer_groupe(void)
                 strncpy(cmdMsg.Emetteur, g_nomUtilisateur, ISY_TAILLE_NOM - 1);
                 strncpy(cmdMsg.Texte, cmdBuf, ISY_TAILLE_TEXTE - 1);
                 if (sendto(sockG, &cmdMsg, sizeof(cmdMsg), 0,
-                           (struct sockaddr *)&addrG, sizeof(addrG)) < 0) {
+                           (struct sockaddr *)&addrG, sizeof(addrG)) < 0)
+                {
                     perror("sendto CMD Client->Groupe");
                 }
                 /* Attendre une réponse */
@@ -240,12 +263,15 @@ static void action_dialoguer_groupe(void)
                 socklen_t lenR = sizeof(addrR);
                 ssize_t nrep = recvfrom(sockG, &rep, sizeof(rep), 0,
                                         (struct sockaddr *)&addrR, &lenR);
-                if (nrep > 0) {
+                if (nrep > 0)
+                {
                     rep.Ordre[ISY_TAILLE_ORDRE - 1] = '\0';
                     rep.Emetteur[ISY_TAILLE_NOM - 1] = '\0';
                     rep.Texte[ISY_TAILLE_TEXTE - 1] = '\0';
                     printf("\n%s\n", rep.Texte);
-                } else {
+                }
+                else
+                {
                     perror("recvfrom CMD response");
                 }
             }
@@ -257,9 +283,14 @@ static void action_dialoguer_groupe(void)
         strncpy(msg.Ordre, "MSG", ISY_TAILLE_ORDRE - 1);
         strncpy(msg.Emetteur, g_nomUtilisateur, ISY_TAILLE_NOM - 1);
         strncpy(msg.Texte, buffer, ISY_TAILLE_TEXTE - 1);
+        msg.Texte[ISY_TAILLE_TEXTE - 1] = '\0';
+
+        /* Chiffrement avant envoi */
+        cesar_chiffrer(msg.Texte);
 
         if (sendto(sockG, &msg, sizeof(msg), 0,
-                   (struct sockaddr *)&addrG, sizeof(addrG)) < 0) {
+                   (struct sockaddr *)&addrG, sizeof(addrG)) < 0)
+        {
             perror("sendto Client->Groupe");
         }
     }
@@ -269,7 +300,8 @@ static void action_dialoguer_groupe(void)
 
 static void action_quitter_groupe(void)
 {
-    if (g_portGroupeActif == 0) {
+    if (g_portGroupeActif == 0)
+    {
         printf("Aucun groupe actif.\n");
         return;
     }
@@ -290,9 +322,11 @@ static void action_supprimer_groupe(void)
     strncpy(req.Emetteur, g_nomUtilisateur, ISY_TAILLE_NOM - 1);
 
     printf("Nom du groupe a supprimer : ");
-    if (fgets(req.Texte, ISY_TAILLE_TEXTE, stdin) == NULL) return;
+    if (fgets(req.Texte, ISY_TAILLE_TEXTE, stdin) == NULL)
+        return;
     req.Texte[strcspn(req.Texte, "\n")] = '\0';
-    if (req.Texte[0] == '\0') return;
+    if (req.Texte[0] == '\0')
+        return;
 
     /* On sauvegarde le nom visé pour le comparer plus tard */
     char groupeVise[ISY_TAILLE_TEXTE];
@@ -304,19 +338,21 @@ static void action_supprimer_groupe(void)
     printf("Reponse serveur : [%s] %s\n", rep.Ordre, rep.Texte);
 
     /* --- MODIFICATION ICI --- */
-    
+
     /* 1. On vérifie si le serveur a validé la suppression (Code "OK") */
-    if (strcmp(rep.Ordre, "OK") == 0) {
-        
+    if (strcmp(rep.Ordre, "OK") == 0)
+    {
+
         /* 2. On vérifie si le groupe supprimé est celui actuellement ouvert */
         /* Note : g_nomGroupeActuel doit être mis à jour dans votre fonction 'rejoindre_groupe' */
-        if (strcmp(groupeVise, g_nomGroupeActif) == 0) {
-            
+        if (strcmp(groupeVise, g_nomGroupeActif) == 0)
+        {
+
             printf("Le groupe courant a été supprimé. Fermeture de l'affichage...\n");
-            
+
             /* On appelle la fonction d'arrêt qu'on a codée précédemment */
             arreter_affichage();
-            
+
             /* On nettoie la variable globale pour dire qu'on n'est plus nulle part */
             memset(g_nomGroupeActif, 0, sizeof(g_nomGroupeActif));
         }
@@ -335,13 +371,17 @@ static void action_fusion_groupes(void)
 
     char g1[64], g2[64];
     printf("Nom du premier groupe : ");
-    if (fgets(g1, sizeof(g1), stdin) == NULL) return;
+    if (fgets(g1, sizeof(g1), stdin) == NULL)
+        return;
     g1[strcspn(g1, "\n")] = '\0';
-    if (g1[0] == '\0') return;
+    if (g1[0] == '\0')
+        return;
     printf("Nom du second groupe : ");
-    if (fgets(g2, sizeof(g2), stdin) == NULL) return;
+    if (fgets(g2, sizeof(g2), stdin) == NULL)
+        return;
     g2[strcspn(g2, "\n")] = '\0';
-    if (g2[0] == '\0') return;
+    if (g2[0] == '\0')
+        return;
     snprintf(req.Texte, ISY_TAILLE_TEXTE, "%s %s", g1, g2);
 
     envoyer_message_serveur(&req, &rep);
@@ -378,16 +418,23 @@ static int login_au_serveur(void)
     envoyer_message_serveur(&req, &rep);
 
     // Analyse de la réponse
-    if (strcmp(rep.Texte, "OK") == 0) {
+    if (strcmp(rep.Texte, "OK") == 0)
+    {
         printf("Connexion reussie ! Bienvenue %s.\n", g_nomUtilisateur);
         return 1; // Succès
-    } else if (strcmp(rep.Texte, "KO") == 0) {
+    }
+    else if (strcmp(rep.Texte, "KO") == 0)
+    {
         printf("Erreur : Le pseudo '%s' est deja utilise.\n", g_nomUtilisateur);
         return 0; // Échec
-    } else if (strcmp(rep.Texte, "FULL") == 0) {
+    }
+    else if (strcmp(rep.Texte, "FULL") == 0)
+    {
         printf("Erreur : Le serveur est complet.\n");
         return 0; // Échec
-    } else {
+    }
+    else
+    {
         printf("Erreur inconnue lors de la connexion : %s\n", rep.Texte);
         return 0;
     }
@@ -427,22 +474,25 @@ int main(void)
     nettoyer_ecran();
 
     sock_client = creer_socket_udp();
-    if (sock_client < 0) {
+    if (sock_client < 0)
+    {
         exit(EXIT_FAILURE);
     }
 
     init_sockaddr(&addrServeur, ISY_IP_SERVEUR, ISY_PORT_SERVEUR);
 
     int connecte = 0;
-    char input[ISY_TAILLE_NOM]; 
+    char input[ISY_TAILLE_NOM];
 
     printf("=== BIENVENUE SUR ISY ===\n\n");
 
     /* Boucle de connexion */
-    while (!connecte) {
+    while (!connecte)
+    {
         printf("Entrez votre nom d'utilisateur : ");
-        
-        if (fgets(input, sizeof(input), stdin) == NULL) {
+
+        if (fgets(input, sizeof(input), stdin) == NULL)
+        {
             printf("\nArret demande.\n");
             fermer_socket_udp(sock_client);
             return 0;
@@ -450,7 +500,8 @@ int main(void)
 
         input[strcspn(input, "\n")] = '\0';
 
-        if (input[0] == '\0') {
+        if (input[0] == '\0')
+        {
             printf(">> Le nom ne peut pas etre vide.\n");
             continue;
         }
@@ -458,11 +509,14 @@ int main(void)
         strncpy(g_nomUtilisateur, input, ISY_TAILLE_NOM - 1);
         g_nomUtilisateur[ISY_TAILLE_NOM - 1] = '\0';
 
-        if (login_au_serveur()) {
+        if (login_au_serveur())
+        {
             connecte = 1;
             /* Petit délai ou pause pour voir le message "Connexion réussie" */
-            pause_console(); 
-        } else {
+            pause_console();
+        }
+        else
+        {
             printf(">> Veuillez réessayer.\n\n");
             /* On attend que l'utilisateur lise l'erreur avant de nettoyer */
             pause_console();
@@ -475,67 +529,71 @@ int main(void)
     char ligne[16];
 
     /* Boucle du Menu Principal */
-    while (1) {
+    while (1)
+    {
         /* On nettoie l'écran à chaque retour au menu pour avoir un affichage propre */
         nettoyer_ecran();
-        
+
         printf("Utilisateur : %s\n", g_nomUtilisateur);
         afficher_menu(); // Affiche la liste des choix
-        
-        if (fgets(ligne, sizeof(ligne), stdin) == NULL) break;
-        if (sscanf(ligne, "%d", &choix) != 1) continue;
+
+        if (fgets(ligne, sizeof(ligne), stdin) == NULL)
+            break;
+        if (sscanf(ligne, "%d", &choix) != 1)
+            continue;
 
         /* Traitement du choix */
         /* Pour les actions (1, 2, 6, 7), on fait l'action PUIS on pause pour laisser lire */
-        switch (choix) {
-            case 0:
-                logout_du_serveur();
-                fermer_socket_udp(sock_client);
-                arreter_affichage();
-                printf("Fin du programme.\n");
-                return 0;
+        switch (choix)
+        {
+        case 0:
+            logout_du_serveur();
+            fermer_socket_udp(sock_client);
+            arreter_affichage();
+            printf("Fin du programme.\n");
+            return 0;
 
-            case 1: 
-                action_creer_groupe();   
-                pause_console(); // Attendre pour lire "Groupe créé"
-                break;
-            
-            case 2: 
-                action_lister_groupes(); 
-                pause_console(); // Attendre pour lire la liste
-                break;
-            
-            case 3: 
-                action_rejoindre_groupe(); 
-                pause_console(); 
-                break;
-            
-            case 4: 
-                /* Le dialogue a sa propre logique d'affichage, on nettoie avant d'entrer */
-                nettoyer_ecran();
-                printf("--- MODE CHAT (Tapez 'cmd' pour options, ligne vide pour quitter) ---\n");
-                action_dialoguer_groupe();  
-                /* Pas besoin de pause ici, quand on quitte le chat, on veut revenir au menu direct */
-                break;
-            
-            case 5: 
-                action_quitter_groupe(); 
-                pause_console();
-                break;
-            
-            case 6: 
-                action_supprimer_groupe(); 
-                pause_console();
-                break;
-            
-            case 7: 
-                action_fusion_groupes();   
-                pause_console();
-                break;
-            
-            default:
-                printf("Choix invalide.\n");
-                pause_console();
+        case 1:
+            action_creer_groupe();
+            pause_console(); // Attendre pour lire "Groupe créé"
+            break;
+
+        case 2:
+            action_lister_groupes();
+            pause_console(); // Attendre pour lire la liste
+            break;
+
+        case 3:
+            action_rejoindre_groupe();
+            pause_console();
+            break;
+
+        case 4:
+            /* Le dialogue a sa propre logique d'affichage, on nettoie avant d'entrer */
+            nettoyer_ecran();
+            printf("--- MODE CHAT (Tapez 'cmd' pour options, ligne vide pour quitter) ---\n");
+            action_dialoguer_groupe();
+            /* Pas besoin de pause ici, quand on quitte le chat, on veut revenir au menu direct */
+            break;
+
+        case 5:
+            action_quitter_groupe();
+            pause_console();
+            break;
+
+        case 6:
+            action_supprimer_groupe();
+            pause_console();
+            break;
+
+        case 7:
+            action_fusion_groupes();
+            pause_console();
+            break;
+
+        default:
+            printf("Choix invalide.\n");
+            pause_console();
         }
     }
 

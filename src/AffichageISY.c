@@ -10,7 +10,8 @@
 int main(int argc, char *argv[])
 {
     /* 1. On vérifie qu'on a bien 2 arguments : port et nom */
-    if (argc < 3) {
+    if (argc < 3)
+    {
         fprintf(stderr, "Usage: AffichageISY <portGroupe> <nomUtilisateur>\n");
         exit(EXIT_FAILURE);
     }
@@ -21,11 +22,13 @@ int main(int argc, char *argv[])
     printf("AffichageISY : inscription sur le port %d pour %s\n", portGroupe, monNom);
 
     int sock = creer_socket_udp();
-    if (sock < 0) exit(EXIT_FAILURE);
+    if (sock < 0)
+        exit(EXIT_FAILURE);
 
     struct sockaddr_in addrLocal;
-    init_sockaddr(&addrLocal, ISY_IP_SERVEUR, 0); 
-    if (bind(sock, (struct sockaddr *)&addrLocal, sizeof(addrLocal)) < 0) {
+    init_sockaddr(&addrLocal, ISY_IP_SERVEUR, 0);
+    if (bind(sock, (struct sockaddr *)&addrLocal, sizeof(addrLocal)) < 0)
+    {
         perror("bind AffichageISY");
         exit(EXIT_FAILURE);
     }
@@ -38,9 +41,10 @@ int main(int argc, char *argv[])
     memset(&reg, 0, sizeof(reg));
     snprintf(reg.Ordre, ISY_TAILLE_ORDRE, "REG");
     /* C'est plus propre d'utiliser le vrai nom ici aussi, même si facultatif */
-    snprintf(reg.Emetteur, ISY_TAILLE_NOM, "%s", monNom); 
+    snprintf(reg.Emetteur, ISY_TAILLE_NOM, "%s", monNom);
 
-    if (sendto(sock, &reg, sizeof(reg), 0, (struct sockaddr *)&addrGroupe, sizeof(addrGroupe)) < 0) {
+    if (sendto(sock, &reg, sizeof(reg), 0, (struct sockaddr *)&addrGroupe, sizeof(addrGroupe)) < 0)
+    {
         perror("sendto REG");
         exit(EXIT_FAILURE);
     }
@@ -51,27 +55,33 @@ int main(int argc, char *argv[])
     struct sockaddr_in addrExp;
     socklen_t lenExp = sizeof(addrExp);
 
-    while (1) {
+    while (1)
+    {
         ssize_t n = recvfrom(sock, &msg, sizeof(msg), 0, (struct sockaddr *)&addrExp, &lenExp);
-        if (n < 0) continue;
+        if (n < 0)
+            continue;
 
-        msg.Ordre[ISY_TAILLE_ORDRE - 1]  = '\0';
+        msg.Ordre[ISY_TAILLE_ORDRE - 1] = '\0';
         msg.Emetteur[ISY_TAILLE_NOM - 1] = '\0';
-        msg.Texte[ISY_TAILLE_TEXTE - 1]  = '\0';
+        msg.Texte[ISY_TAILLE_TEXTE - 1] = '\0';
 
-        if (strcmp(msg.Ordre, "MSG") == 0) {
-            /* 2. LA LOGIQUE D'AFFICHAGE "MOI" EST ICI */
-            
-            if (strcmp(msg.Emetteur, monNom) == 0) {
-                /* Si l'émetteur est identique à mon nom */
+        if (strcmp(msg.Ordre, "MSG") == 0)
+        {
+            /* Déchiffrement du texte reçu */
+            cesar_dechiffrer(msg.Texte);
+
+            if (strcmp(msg.Emetteur, monNom) == 0)
+            {
                 printf("[Moi] : %s\n", msg.Texte);
-            } else {
-                /* Sinon, c'est quelqu'un d'autre */
+            }
+            else
+            {
                 printf("[%s] : %s\n", msg.Emetteur, msg.Texte);
             }
             fflush(stdout);
         }
-        else if (strcmp(msg.Ordre, "FIN") == 0) {
+        else if (strcmp(msg.Ordre, "FIN") == 0)
+        {
             printf("--- Le groupe a été fermé par le modérateur ---\n");
             printf("Fermeture automatique...\n");
             break; /* On sort de la boucle while(1), donc le programme s'arrête */

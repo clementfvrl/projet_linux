@@ -31,6 +31,8 @@
 #define ISY_TAILLE_NOM 20
 #define ISY_TAILLE_TEXTE 100
 
+#define ISY_CESAR_DECALAGE 3
+
 /* ==== STRUCTURE DE MESSAGE ==== */
 /* Ordres simples (3 lettres + '\0') :
  * "LST" : liste groupes
@@ -107,6 +109,49 @@ static inline void afficher_message_debug(const char *prefix,
 {
     printf("[%s] Ordre='%s' Emetteur='%s' Texte='%s'\n",
            prefix, msg->Ordre, msg->Emetteur, msg->Texte);
+}
+
+/* Chiffrement César simple sur les lettres (a-z, A-Z) */
+static inline char cesar_shift_char(char c, int decalage)
+{
+    if (c >= 'a' && c <= 'z')
+    {
+        int base = 'a';
+        int offset = ((c - base) + decalage) % 26;
+        if (offset < 0)
+            offset += 26;
+        return (char)(base + offset);
+    }
+    else if (c >= 'A' && c <= 'Z')
+    {
+        int base = 'A';
+        int offset = ((c - base) + decalage) % 26;
+        if (offset < 0)
+            offset += 26;
+        return (char)(base + offset);
+    }
+    /* Tout le reste (espaces, ponctuation, chiffres) est inchangé */
+    return c;
+}
+
+static inline void cesar_chiffrer(char *texte)
+{
+    if (!texte)
+        return;
+    for (int i = 0; texte[i] != '\0'; ++i)
+    {
+        texte[i] = cesar_shift_char(texte[i], ISY_CESAR_DECALAGE);
+    }
+}
+
+static inline void cesar_dechiffrer(char *texte)
+{
+    if (!texte)
+        return;
+    for (int i = 0; texte[i] != '\0'; ++i)
+    {
+        texte[i] = cesar_shift_char(texte[i], -ISY_CESAR_DECALAGE);
+    }
 }
 
 #endif /* COMMUN_H */
