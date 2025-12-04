@@ -86,10 +86,34 @@ static int trouver_index_membre(const struct sockaddr_in *addr)
     return -1;
 }
 
+/* * CORRECTION ICI : Gestion des doublons par Nom 
+ */
 static void ajouter_membre(const struct sockaddr_in *addr, const char *nom)
 {
+    /* 1. Si l'adresse exacte (IP + Port) est déjà connue, on ne fait rien */
     if (adresse_deja_connue(addr))
         return;
+
+    /* 2. CORRECTION : Vérifier si le NOM existe déjà (changement de port du client ?) */
+    if (nom && nom[0] != '\0') {
+        for (int i = 0; i < ISY_MAX_MEMBRES; ++i) {
+            /* On compare les noms (insensible à la casse) */
+            if (g_membres[i].actif && strcasecmp(g_membres[i].nom, nom) == 0) {
+                /* Le nom existe déjà ! C'est le même utilisateur avec un nouveau port.
+                   On met à jour son adresse pour éviter le doublon. */
+                g_membres[i].addr = *addr;
+                
+                /* Optionnel : On peut réinitialiser le statut 'banni' si besoin, 
+                   ou le laisser tel quel. Ici on le laisse banni si il l'était. */
+                if (g_membres[i].banni) {
+                     printf("GroupeISY: Tentative de reconnexion d'un membre banni (%s)\n", nom);
+                }
+                return; /* On quitte, mise à jour faite */
+            }
+        }
+    }
+
+    /* 3. Sinon, c'est vraiment un nouveau membre, on cherche un slot vide */
     int idx = trouver_slot_membre();
     if (idx < 0)
         return;
@@ -110,10 +134,7 @@ static void ajouter_membre(const struct sockaddr_in *addr, const char *nom)
     g_membres[idx].somme_intervalles = 0.0;
 }
 
-/* * CORRECTION MAJEURE ICI :
- * On n'envoie PAS le message à l'émetteur pour éviter le "train de retard"
- * dans la file d'attente du client.
- */
+/* Fonction corrigée pour éviter l'écho à l'expéditeur */
 static void redistribuer_message(const MessageISY *msg,
                                  const struct sockaddr_in *addrEmetteur)
 {
@@ -121,7 +142,6 @@ static void redistribuer_message(const MessageISY *msg,
     {
         if (g_membres[i].actif)
         {
-
             /* SI C'EST L'AUTEUR, ON PASSE (pas d'écho) */
             if (g_membres[i].addr.sin_addr.s_addr == addrEmetteur->sin_addr.s_addr &&
                 g_membres[i].addr.sin_port == addrEmetteur->sin_port)
@@ -159,7 +179,7 @@ static void arret_groupe(int sig)
                    sizeof(g_membres[i].addr));
         }
     }
-    sleep(0.1);
+    sleep(0.1); 
     fermer_socket_udp(sock_groupe);
     printf("GroupeISY : Arret terminé.\n");
     exit(0);
