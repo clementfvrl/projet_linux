@@ -12,8 +12,6 @@
 #include <stdlib.h>
 #include <stdio.h>
 
-#include <ctype.h> /* pour tolower dans l'analyse des commandes */
-
 static int sock_groupe = -1;
 static int g_portGroupe = 0;
 
@@ -91,33 +89,6 @@ static void ajouter_membre(const struct sockaddr_in *addr, const char *nom)
 {
     if (adresse_deja_connue(addr)) return;
 
-    /* Avant d'ajouter, on vérifie si le nom est sur liste noire (fiche 2.0) */
-    if (nom && nom[0] != '\0')
-    {
-        /* On récupère le nom de base sans suffixe _Vue */
-        char nomBase[ISY_TAILLE_NOM];
-        strncpy(nomBase, nom, ISY_TAILLE_NOM - 1);
-        nomBase[ISY_TAILLE_NOM - 1] = '\0';
-        char *suf = strstr(nomBase, "_Vue");
-        if (suf) *suf = '\0';
-
-        for (int i = 0; i < ISY_MAX_MEMBRES; ++i)
-        {
-            if (g_membres[i].banni && strcasecmp(g_membres[i].nom, nomBase) == 0)
-            {
-                /* Ce nom a été banni : on envoie un message 'BAN' au client */
-                MessageISY banMsg;
-                memset(&banMsg, 0, sizeof(banMsg));
-                strncpy(banMsg.Ordre, "BAN", ISY_TAILLE_ORDRE - 1);
-                strncpy(banMsg.Emetteur, "SYSTEM", ISY_TAILLE_NOM - 1);
-                strncpy(banMsg.Texte, "Vous êtes banni de ce groupe", ISY_TAILLE_TEXTE - 1);
-                sendto(sock_groupe, &banMsg, sizeof(banMsg), 0,
-                       (const struct sockaddr *)addr, sizeof(*addr));
-                return;
-            }
-        }
-    }
-
     /* Si le nom existe déjà, on met à jour le port (cas du redémarrage client) */
     if (nom && nom[0] != '\0') {
         for (int i = 0; i < ISY_MAX_MEMBRES; ++i) {
@@ -138,8 +109,7 @@ static void ajouter_membre(const struct sockaddr_in *addr, const char *nom)
         strncpy(g_membres[idx].nom, nom, ISY_TAILLE_NOM - 1);
         g_membres[idx].nom[ISY_TAILLE_NOM - 1] = '\0';
     }
-    /* Si le membre était banni précédemment, on conserve la valeur (ne pas remettre à 0). */
-    /* Le champ banni est laissé tel quel pour permettre la reconduction du bannissement. */
+    g_membres[idx].banni = 0;
 
     g_membres[idx].date_connexion = time(NULL);
     g_membres[idx].date_dernier_msg = 0;
@@ -295,53 +265,8 @@ int main(int argc, char *argv[])
             strncpy(rep.Emetteur, "Groupe", ISY_TAILLE_NOM - 1);
             rep.Texte[0] = '\0';
 
-            /* Convertir la commande en minuscules pour comparaison insensible à la casse */
-            char cmdLower[ISY_TAILLE_TEXTE];
-            int lenCmd = 0;
-            for (; lenCmd < (int)sizeof(cmdLower) - 1 && cmd[lenCmd] != '\0'; ++lenCmd)
-            {
-                cmdLower[lenCmd] = (char)tolower((unsigned char)cmd[lenCmd]);
-            }
-            cmdLower[lenCmd] = '\0';
-
-            /* Commande QUIT : un membre souhaite quitter le groupe */
-            if (strncmp(cmdLower, "quit", 4) == 0)
-            {
-                int idxQuit = trouver_index_membre(&addrCli);
-                if (idxQuit >= 0)
-                {
-                    char quitter[ISY_TAILLE_NOM];
-                    strncpy(quitter, g_membres[idxQuit].nom, ISY_TAILLE_NOM - 1);
-                    quitter[ISY_TAILLE_NOM - 1] = '\0';
-                    g_membres[idxQuit].actif = 0;
-                    /* Diffuse le départ aux autres membres */
-                    MessageISY notMsg;
-                    memset(&notMsg, 0, sizeof(notMsg));
-                    strncpy(notMsg.Ordre, "MSG", ISY_TAILLE_ORDRE - 1);
-                    strncpy(notMsg.Emetteur, "SYSTEM", ISY_TAILLE_NOM - 1);
-                    snprintf(notMsg.Texte, ISY_TAILLE_TEXTE, "%s a quitté le groupe", quitter);
-                    redistribuer_message(&notMsg, &addrCli);
-                    /* Réponse au membre qui quitte */
-                    snprintf(rep.Texte, ISY_TAILLE_TEXTE, "Vous avez quitté le groupe");
-                }
-                else
-                {
-                    snprintf(rep.Texte, ISY_TAILLE_TEXTE, "Vous n'étiez pas membre du groupe");
-                }
-            }
-            /* Commande HELP */
-            else if (strncmp(cmdLower, "help", 4) == 0 || strcmp(cmdLower, "?") == 0)
-            {
-                snprintf(rep.Texte, ISY_TAILLE_TEXTE,
-                         "Commandes disponibles :\n"
-                         "  list          - lister les membres du groupe\n"
-                         "  stats         - statistiques d'activité\n"
-                         "  ban <nom>     - bannir un membre (alias delete)\n"
-                         "  quit          - quitter le groupe\n"
-                         "  help/?        - afficher cette aide");
-            }
             /* Commande LIST */
-            else if (strncasecmp(cmd, "list", 4) == 0)
+            if (strncasecmp(cmd, "list", 4) == 0)
             {
                 for (int i = 0; i < ISY_MAX_MEMBRES; ++i)
                 {
@@ -365,60 +290,35 @@ int main(int argc, char *argv[])
             /* Commande STATS */
             else if (strncasecmp(cmd, "stats", 5) == 0)
             {
-                /* Prépare un tableau temporaire pour trier les membres */
-                typedef struct {
-                    char nom[ISY_TAILLE_NOM + 5];
-                    int messages;
-                    double duree;
-                    double intervalle;
-                } StatsEntry;
-                StatsEntry entries[ISY_MAX_MEMBRES];
-                int count = 0;
+                snprintf(rep.Texte, ISY_TAILLE_TEXTE, "%-10s %-3s %-4s %-4s\n", "NOM", "NB", "TPS", "INT");
                 time_t now = time(NULL);
+                
                 for (int i = 0; i < ISY_MAX_MEMBRES; ++i)
                 {
                     if (g_membres[i].actif && !g_membres[i].banni)
                     {
                         if (strstr(g_membres[i].nom, "_Vue") != NULL) continue;
+
                         double duree = difftime(now, g_membres[i].date_connexion);
                         double moy = 0.0;
                         if (g_membres[i].nb_messages > 1)
                             moy = g_membres[i].somme_intervalles / (g_membres[i].nb_messages - 1);
-                        StatsEntry e;
-                        strcpy(e.nom, g_membres[i].nom);
-                        if (strcasecmp(g_membres[i].nom, g_moderateurName) == 0) strcat(e.nom, "*");
-                        e.messages = g_membres[i].nb_messages;
-                        e.duree = duree;
-                        e.intervalle = moy;
-                        entries[count++] = e;
+
+                        char nomAffiche[ISY_TAILLE_NOM + 5];
+                        strcpy(nomAffiche, g_membres[i].nom);
+                        if (strcasecmp(g_membres[i].nom, g_moderateurName) == 0) strcat(nomAffiche, "*"); 
+
+                        char line[128];
+                        snprintf(line, sizeof(line), "%-10s %-3d %-4.0f %-4.1f\n",
+                                    nomAffiche, g_membres[i].nb_messages, duree, moy);
+
+                        if (strlen(rep.Texte) + strlen(line) < ISY_TAILLE_TEXTE)
+                            strcat(rep.Texte, line);
                     }
-                }
-                /* Tri croissant par nombre de messages puis par durée de connexion */
-                for (int a = 0; a < count; ++a)
-                {
-                    for (int b = a + 1; b < count; ++b)
-                    {
-                        if (entries[b].messages < entries[a].messages ||
-                            (entries[b].messages == entries[a].messages && entries[b].duree < entries[a].duree))
-                        {
-                            StatsEntry tmp = entries[a];
-                            entries[a] = entries[b];
-                            entries[b] = tmp;
-                        }
-                    }
-                }
-                snprintf(rep.Texte, ISY_TAILLE_TEXTE, "%-10s %-5s %-7s %-7s\n", "Nom", "Msgs", "Conn(s)", "Int(s)");
-                for (int i = 0; i < count; ++i)
-                {
-                    char line[128];
-                    snprintf(line, sizeof(line), "%-10s %-5d %-7.0f %-7.1f\n",
-                                entries[i].nom, entries[i].messages, entries[i].duree, entries[i].intervalle);
-                    if (strlen(rep.Texte) + strlen(line) < ISY_TAILLE_TEXTE)
-                        strcat(rep.Texte, line);
                 }
                 strcat(rep.Texte, "(* = Gestionnaire)");
             }
-            /* Commandes ADMIN : ban/delete */
+            /* Commandes ADMIN */
             else if (strncasecmp(cmd, "delete ", 7) == 0 || strncasecmp(cmd, "ban ", 4) == 0)
             {
                 if (strcasecmp(msg.Emetteur, g_moderateurName) != 0) {
@@ -439,17 +339,8 @@ int main(int argc, char *argv[])
                                     snprintf(rep.Texte, ISY_TAILLE_TEXTE, "Impossible d'exclure le gestionnaire !");
                                     found = 1; break;
                                 }
-                                /* Marquer comme banni et désactiver */
                                 g_membres[i].banni = 1;
                                 g_membres[i].actif = 0;
-                                /* Notifier le membre banni */
-                                MessageISY banMsg;
-                                memset(&banMsg, 0, sizeof(banMsg));
-                                strncpy(banMsg.Ordre, "BAN", ISY_TAILLE_ORDRE - 1);
-                                strncpy(banMsg.Emetteur, "SYSTEM", ISY_TAILLE_NOM - 1);
-                                snprintf(banMsg.Texte, ISY_TAILLE_TEXTE, "Vous avez été banni du groupe");
-                                sendto(sock_groupe, &banMsg, sizeof(banMsg), 0,
-                                       (struct sockaddr *)&g_membres[i].addr, sizeof(g_membres[i].addr));
                                 found = 1;
                             }
                         }
@@ -460,8 +351,7 @@ int main(int argc, char *argv[])
             }
             else
             {
-                /* Commande inconnue : on renvoie l'aide rapide */
-                strncpy(rep.Texte, "Commandes : list, stats, ban <nom>, quit, help", ISY_TAILLE_TEXTE - 1);
+                strncpy(rep.Texte, "Cmds: list, stats, [admin: delete <nom>]", ISY_TAILLE_TEXTE - 1);
             }
             
             /* Envoi de la réponse uniquement à celui qui a fait la demande (Pas d'écho aux autres) */

@@ -308,40 +308,24 @@ int main(void)
                     snprintf(msgRep.Ordre, ISY_TAILLE_ORDRE, "ERR");
                     snprintf(msgRep.Texte, ISY_TAILLE_TEXTE,
                              "Groupes introuvables pour fusion");
+                } else if (strncmp(g_groupes[idx1].moderateurName, msgReq.Emetteur, ISY_TAILLE_NOM) != 0) {
+                    snprintf(msgRep.Ordre, ISY_TAILLE_ORDRE, "ERR");
+                    snprintf(msgRep.Texte, ISY_TAILLE_TEXTE,
+                             "Seul le moderateur peut fusionner");
                 } else {
-                    /* Vérifie que l'émetteur est modérateur des deux groupes (fiche 2.0) */
-                    if (strncmp(g_groupes[idx1].moderateurName, msgReq.Emetteur, ISY_TAILLE_NOM) != 0 ||
-                        strncmp(g_groupes[idx2].moderateurName, msgReq.Emetteur, ISY_TAILLE_NOM) != 0) {
-                        snprintf(msgRep.Ordre, ISY_TAILLE_ORDRE, "ERR");
-                        snprintf(msgRep.Texte, ISY_TAILLE_TEXTE,
-                                 "Fusion refusée : vous devez être modérateur des deux groupes");
-                    } else {
-                        /* Fusion de g2 dans g1 */
-                        if (g_groupes[idx2].pid > 0) {
-                            kill(g_groupes[idx2].pid, SIGINT);
-                            waitpid(g_groupes[idx2].pid, NULL, 0);
-                        }
-                        g_groupes[idx2].actif = 0;
-                        g_groupes[idx2].port = 0;
-                        g_groupes[idx2].nom[0] = '\0';
-                        g_groupes[idx2].moderateurName[0] = '\0';
-                        g_groupes[idx2].pid = 0;
-
-                        /* Notifie les membres du groupe restant qu'une fusion a eu lieu */
-                        MessageISY notif;
-                        memset(&notif, 0, sizeof(notif));
-                        strncpy(notif.Ordre, "MSG", ISY_TAILLE_ORDRE - 1);
-                        strncpy(notif.Emetteur, "SYSTEM", ISY_TAILLE_NOM - 1);
-                        snprintf(notif.Texte, ISY_TAILLE_TEXTE, "Les groupes '%s' et '%s' ont été fusionnés", g1, g2);
-                        struct sockaddr_in addrG1;
-                        init_sockaddr(&addrG1, ISY_IP_SERVEUR, g_groupes[idx1].port);
-                        /* Envoi du message au processus GroupeISY pour diffusion */
-                        sendto(sock_serveur, &notif, sizeof(notif), 0, (struct sockaddr *)&addrG1, sizeof(addrG1));
-
-                        snprintf(msgRep.Ordre, ISY_TAILLE_ORDRE, "ACK");
-                        snprintf(msgRep.Texte, ISY_TAILLE_TEXTE,
-                                 "Groupes '%s' et '%s' fusionnes (membres de %s doivent se reconnecter)", g1, g2, g1);
+                    /* Fusion de g2 dans g1 */
+                    if (g_groupes[idx2].pid > 0) {
+                        kill(g_groupes[idx2].pid, SIGINT);
+                        waitpid(g_groupes[idx2].pid, NULL, 0);
                     }
+                    g_groupes[idx2].actif = 0;
+                    g_groupes[idx2].port = 0;
+                    g_groupes[idx2].nom[0] = '\0';
+                    g_groupes[idx2].moderateurName[0] = '\0';
+                    g_groupes[idx2].pid = 0;
+                    snprintf(msgRep.Ordre, ISY_TAILLE_ORDRE, "ACK");
+                    snprintf(msgRep.Texte, ISY_TAILLE_TEXTE,
+                             "Groupes '%s' et '%s' fusionnes (membres de %s doivent se reconnecter)", g1, g2, g1);
                 }
             }
         } else {

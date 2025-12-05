@@ -86,13 +86,6 @@ int main(int argc, char *argv[])
             printf("Fermeture automatique...\n");
             break; /* On sort de la boucle while(1), donc le programme s'arrête */
         }
-        else if (strcmp(msg.Ordre, "BAN") == 0)
-        {
-            /* Notification de bannissement reçue : on informe l'utilisateur et on ferme */
-            printf("--- %s ---\n", msg.Texte);
-            printf("Vous avez été exclu du groupe. Fermeture automatique...\n");
-            break;
-        }
     }
 
     fermer_socket_udp(sock);

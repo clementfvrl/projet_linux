@@ -5,8 +5,6 @@
 
 #include "commun.h"
 
-#include <ctype.h> /* pour tolower dans le mode commande */
-
 static int sock_client = -1;
 static struct sockaddr_in addrServeur;
 
@@ -235,38 +233,19 @@ static void action_dialoguer_groupe(void)
                 if (fgets(cmdBuf, sizeof(cmdBuf), stdin) == NULL)
                     break;
                 cmdBuf[strcspn(cmdBuf, "\n")] = '\0';
-                /* Passage en minuscules pour comparaison insensible à la casse */
-                char cmdLower[ISY_TAILLE_TEXTE];
-                int i;
-                for (i = 0; cmdBuf[i] && i < (int)sizeof(cmdLower) - 1; ++i)
-                    cmdLower[i] = (char)tolower((unsigned char)cmdBuf[i]);
-                cmdLower[i] = '\0';
-
-                /* 'msg' : retour en mode chat */
-                if (strcmp(cmdLower, "msg") == 0)
+                if (strcmp(cmdBuf, "msg") == 0)
                 {
+                    /* retour au chat */
                     break;
                 }
-                /* 'quit' : quitter le groupe (et revenir au menu) */
-                else if (strcmp(cmdLower, "quit") == 0)
+                else if (strcmp(cmdBuf, "quit") == 0)
                 {
+                    /* quitter complètement le groupe */
+                    /* arrêter l'affichage et revenir au menu principal */
                     fermer_socket_udp(sockG);
                     action_quitter_groupe();
                     return;
                 }
-                /* 'help' ou '?' : affiche les commandes disponibles */
-                else if (strcmp(cmdLower, "help") == 0 || strcmp(cmdLower, "?") == 0)
-                {
-                    printf("\nCommandes disponibles :\n");
-                    printf("  list         : lister les membres du groupe\n");
-                    printf("  stats        : afficher les statistiques\n");
-                    printf("  ban <nom>    : bannir un membre (gestionnaire)\n");
-                    printf("  quit         : quitter le groupe\n");
-                    printf("  msg          : revenir au mode chat\n");
-                    printf("  help, ?      : afficher cette aide\n\n");
-                    continue;
-                }
-
                 /* Envoyer la commande au groupe */
                 MessageISY cmdMsg;
                 memset(&cmdMsg, 0, sizeof(cmdMsg));
@@ -326,27 +305,6 @@ static void action_quitter_groupe(void)
         printf("Aucun groupe actif.\n");
         return;
     }
-
-    /* Avant de quitter, notifier le groupe pour que les autres membres soient informés */
-    /* On envoie une commande 'quit' au processus GroupeISY */
-    {
-        int sockTmp = creer_socket_udp();
-        if (sockTmp >= 0)
-        {
-            struct sockaddr_in addrG;
-            init_sockaddr(&addrG, ISY_IP_SERVEUR, g_portGroupeActif);
-            MessageISY msg;
-            memset(&msg, 0, sizeof(msg));
-            strncpy(msg.Ordre, "CMD", ISY_TAILLE_ORDRE - 1);
-            strncpy(msg.Emetteur, g_nomUtilisateur, ISY_TAILLE_NOM - 1);
-            strncpy(msg.Texte, "quit", ISY_TAILLE_TEXTE - 1);
-            /* Envoi sans attendre de réponse car on ferme ensuite */
-            sendto(sockTmp, &msg, sizeof(msg), 0,
-                   (struct sockaddr *)&addrG, sizeof(addrG));
-            fermer_socket_udp(sockTmp);
-        }
-    }
-
     arreter_affichage();
     printf("Groupe sur port %d quitte (cote client seulement).\n",
            g_portGroupeActif);
@@ -369,18 +327,6 @@ static void action_supprimer_groupe(void)
     req.Texte[strcspn(req.Texte, "\n")] = '\0';
     if (req.Texte[0] == '\0')
         return;
-
-    /* Demande de confirmation avant suppression (fiche de version 2.0) */
-    char confirmation[8];
-    printf("Êtes‑vous sûr de vouloir supprimer le groupe '%s'? (o/N) : ", req.Texte);
-    if (fgets(confirmation, sizeof(confirmation), stdin) == NULL)
-        return;
-    /* On ne supprime que si l'utilisateur confirme par 'o' ou 'O' */
-    if (!(confirmation[0] == 'o' || confirmation[0] == 'O'))
-    {
-        printf("Suppression annulée.\n");
-        return;
-    }
 
     /* On sauvegarde le nom visé pour le comparer plus tard */
     char groupeVise[ISY_TAILLE_TEXTE];
