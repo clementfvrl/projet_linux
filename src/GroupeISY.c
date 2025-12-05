@@ -320,6 +320,8 @@ int main(int argc, char *argv[])
                     strncpy(notMsg.Ordre, "MSG", ISY_TAILLE_ORDRE - 1);
                     strncpy(notMsg.Emetteur, "SYSTEM", ISY_TAILLE_NOM - 1);
                     snprintf(notMsg.Texte, ISY_TAILLE_TEXTE, "%s a quitté le groupe", quitter);
+                    /* Chiffrement du message SYSTEM avant diffusion */
+                    cesar_chiffrer(notMsg.Texte);
                     redistribuer_message(&notMsg, &addrCli);
                     /* Réponse au membre qui quitte */
                     snprintf(rep.Texte, ISY_TAILLE_TEXTE, "Vous avez quitté le groupe");

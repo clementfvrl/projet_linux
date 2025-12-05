@@ -127,6 +127,9 @@ static void action_creer_groupe(void)
     printf("Nom du groupe a creer : ");
     if (fgets(req.Texte, ISY_TAILLE_TEXTE, stdin) == NULL)
         return;
+    /* Vider le buffer si l'utilisateur a tapé plus que prévu */
+    if (strchr(req.Texte, '\n') == NULL)
+        vider_stdin();
     req.Texte[strcspn(req.Texte, "\n")] = '\0';
 
     envoyer_message_serveur(&req, &rep);
@@ -160,6 +163,9 @@ static void action_rejoindre_groupe(void)
     printf("Nom du groupe a rejoindre : ");
     if (fgets(req.Texte, ISY_TAILLE_TEXTE, stdin) == NULL)
         return;
+    /* Vider le buffer si l'utilisateur a tapé plus que prévu */
+    if (strchr(req.Texte, '\n') == NULL)
+        vider_stdin();
     req.Texte[strcspn(req.Texte, "\n")] = '\0';
 
     /* Copie temporaire du nom demandé */
@@ -223,6 +229,9 @@ static void action_dialoguer_groupe(void)
         printf("Message : ");
         if (fgets(buffer, sizeof(buffer), stdin) == NULL)
             break;
+        /* Vider le buffer si l'utilisateur a tapé plus que prévu */
+        if (strchr(buffer, '\n') == NULL)
+            vider_stdin();
         buffer[strcspn(buffer, "\n")] = '\0';
         if (buffer[0] == '\0')
             break;
@@ -237,6 +246,9 @@ static void action_dialoguer_groupe(void)
                 printf("Commande : ");
                 if (fgets(cmdBuf, sizeof(cmdBuf), stdin) == NULL)
                     break;
+                /* Vider le buffer si l'utilisateur a tapé plus que prévu */
+                if (strchr(cmdBuf, '\n') == NULL)
+                    vider_stdin();
                 cmdBuf[strcspn(cmdBuf, "\n")] = '\0';
                 /* Passage en minuscules pour comparaison insensible à la casse */
                 char cmdLower[ISY_TAILLE_TEXTE];
@@ -281,22 +293,34 @@ static void action_dialoguer_groupe(void)
                 {
                     perror("sendto CMD Client->Groupe");
                 }
-                /* Attendre une réponse */
+                /* Attendre une réponse RSP (ignorer les MSG broadcasts) */
                 MessageISY rep;
                 struct sockaddr_in addrR;
                 socklen_t lenR = sizeof(addrR);
-                ssize_t nrep = recvfrom(sockG, &rep, sizeof(rep), 0,
-                                        (struct sockaddr *)&addrR, &lenR);
-                if (nrep > 0)
+                int received_response = 0;
+
+                /* Boucle pour ignorer les messages non-RSP */
+                while (!received_response)
                 {
+                    ssize_t nrep = recvfrom(sockG, &rep, sizeof(rep), 0,
+                                            (struct sockaddr *)&addrR, &lenR);
+                    if (nrep <= 0)
+                    {
+                        perror("recvfrom CMD response");
+                        break;
+                    }
+
                     rep.Ordre[ISY_TAILLE_ORDRE - 1] = '\0';
                     rep.Emetteur[ISY_TAILLE_NOM - 1] = '\0';
                     rep.Texte[ISY_TAILLE_TEXTE - 1] = '\0';
-                    printf("\n%s\n", rep.Texte);
-                }
-                else
-                {
-                    perror("recvfrom CMD response");
+
+                    /* Ne traiter que les réponses RSP */
+                    if (strcmp(rep.Ordre, "RSP") == 0)
+                    {
+                        printf("\n%s\n", rep.Texte);
+                        received_response = 1;
+                    }
+                    /* Ignorer silencieusement les autres types de messages (MSG, etc.) */
                 }
             }
             continue;
@@ -369,6 +393,9 @@ static void action_supprimer_groupe(void)
     printf("Nom du groupe a supprimer : ");
     if (fgets(req.Texte, ISY_TAILLE_TEXTE, stdin) == NULL)
         return;
+    /* Vider le buffer si l'utilisateur a tapé plus que prévu */
+    if (strchr(req.Texte, '\n') == NULL)
+        vider_stdin();
     req.Texte[strcspn(req.Texte, "\n")] = '\0';
     if (req.Texte[0] == '\0')
         return;
@@ -433,12 +460,18 @@ static void action_fusion_groupes(void)
     printf("Nom du premier groupe : ");
     if (fgets(g1, sizeof(g1), stdin) == NULL)
         return;
+    /* Vider le buffer si l'utilisateur a tapé plus que prévu */
+    if (strchr(g1, '\n') == NULL)
+        vider_stdin();
     g1[strcspn(g1, "\n")] = '\0';
     if (g1[0] == '\0')
         return;
     printf("Nom du second groupe : ");
     if (fgets(g2, sizeof(g2), stdin) == NULL)
         return;
+    /* Vider le buffer si l'utilisateur a tapé plus que prévu */
+    if (strchr(g2, '\n') == NULL)
+        vider_stdin();
     g2[strcspn(g2, "\n")] = '\0';
     if (g2[0] == '\0')
         return;
