@@ -17,6 +17,9 @@ static pid_t g_pidAffichage = 0;
 static char g_nomUtilisateur[ISY_TAILLE_NOM] = "user";
 
 /* ==== Fonctions utilitaires client ==== */
+/* Vider le buffer stdin pour éviter les caractères résiduels */
+static void vider_stdin(void);
+
 /* Prototypes des actions */
 static void action_creer_groupe(void);
 static void action_lister_groupes(void);
@@ -375,6 +378,9 @@ static void action_supprimer_groupe(void)
     printf("Êtes‑vous sûr de vouloir supprimer le groupe '%s'? (o/N) : ", req.Texte);
     if (fgets(confirmation, sizeof(confirmation), stdin) == NULL)
         return;
+    /* Vider le buffer si l'utilisateur a tapé plus que prévu */
+    if (strchr(confirmation, '\n') == NULL)
+        vider_stdin();
     /* On ne supprime que si l'utilisateur confirme par 'o' ou 'O' */
     if (!(confirmation[0] == 'o' || confirmation[0] == 'O'))
     {
@@ -515,11 +521,17 @@ static void nettoyer_ecran(void)
     printf("\033[H\033[J");
 }
 
+/* Vider le buffer stdin pour éviter les caractères résiduels */
+static void vider_stdin(void)
+{
+    int c;
+    while ((c = getchar()) != '\n' && c != EOF);
+}
+
 static void pause_console(void)
 {
     printf("\nAppuyez sur [Entree] pour continuer...");
-    char buf[16];
-    fgets(buf, sizeof(buf), stdin);
+    vider_stdin();
 }
 
 int main(void)
@@ -551,6 +563,10 @@ int main(void)
             fermer_socket_udp(sock_client);
             return 0;
         }
+
+        /* Vider le buffer si l'utilisateur a tapé plus que prévu */
+        if (strchr(input, '\n') == NULL)
+            vider_stdin();
 
         input[strcspn(input, "\n")] = '\0';
 
@@ -593,6 +609,9 @@ int main(void)
 
         if (fgets(ligne, sizeof(ligne), stdin) == NULL)
             break;
+        /* Vider le buffer si l'utilisateur a tapé plus que prévu */
+        if (strchr(ligne, '\n') == NULL)
+            vider_stdin();
         if (sscanf(ligne, "%d", &choix) != 1)
             continue;
 

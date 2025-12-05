@@ -61,3 +61,7 @@ data/
 
 # VS Code data
 .vscode
+
+# Claude data
+.claude
+CLAUDE.md
