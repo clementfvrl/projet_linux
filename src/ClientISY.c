@@ -16,18 +16,6 @@ static int g_portGroupeActif = 0;
 static pid_t g_pidAffichage = 0;
 static char g_nomUtilisateur[ISY_TAILLE_NOM] = "user";
 
-/*
- * Prototypes internes supplémentaires.
- * Ces déclarations anticipées évitent les déclarations implicites lors de
- * l'utilisation des fonctions avant leur définition. Elles sont marquées
- * 'static' pour conserver la visibilité limitée au fichier.
- */
-void envoyer_message_serveur(const MessageISY *msgReq, MessageISY *msgRep);
-void lancer_affichage(int portGroupe);
-static void lancer_affichage_ex(int portGroupe, const char *nomClient);
-void arreter_affichage(void);
-static void rejoindre_groupe_auto(const char *nomGroupe, int portSuggestion);
-
 /* ==== Fonctions utilitaires client ==== */
 /* Vider le buffer stdin pour éviter les caractères résiduels */
 static void vider_stdin(void);
@@ -41,7 +29,7 @@ static void action_quitter_groupe(void);
 static void action_supprimer_groupe(void);
 static void action_fusion_groupes(void);
 
-void envoyer_message_serveur(const MessageISY *msgReq,
+static void envoyer_message_serveur(const MessageISY *msgReq,
                                     MessageISY *msgRep)
 {
     socklen_t lenServ = sizeof(addrServeur);
@@ -68,16 +56,7 @@ void envoyer_message_serveur(const MessageISY *msgReq,
 
 /* Lance AffichageISY sur le port du groupe */
 /* Notez l'ajout de 'const char *nomClient' dans les paramètres */
-/*
- * Lancement d'une fenêtre d'affichage pour un groupe.
- * Cette fonction interne prend explicitement le nom du client à passer à
- * AffichageISY. L'ancienne fonction lancer_affichage(int) est conservée en
- * wrapper pour maintenir la compatibilité avec les prototypes éventuels
- * définis dans les en-têtes. Les paramètres sont :
- *  - portGroupe : le port UDP du groupe à écouter
- *  - nomClient  : le nom d'utilisateur à afficher dans la fenêtre
- */
-static void lancer_affichage_ex(int portGroupe, const char *nomClient)
+static void lancer_affichage(int portGroupe, const char *nomClient)
 {
     pid_t pid = fork();
     if (pid < 0)
@@ -126,18 +105,7 @@ static void lancer_affichage_ex(int portGroupe, const char *nomClient)
     g_pidAffichage = pid;
 }
 
-/* Wrapper public qui conserve la signature originale (un seul paramètre).
- * Il utilise le nom d'utilisateur global pour lancer l'affichage. Si des
- * prototypes externes existent avec cette signature, ils resteront
- * compatibles. Les nouvelles fonctionnalités internes devraient appeler
- * lancer_affichage_ex().
- */
-void lancer_affichage(int portGroupe)
-{
-    lancer_affichage_ex(portGroupe, g_nomUtilisateur);
-}
-
-void arreter_affichage(void)
+static void arreter_affichage(void)
 {
     if (g_pidAffichage > 0)
     {
@@ -149,60 +117,6 @@ void arreter_affichage(void)
 
         g_pidAffichage = 0;
     }
-}
-
-/*
- * rejoins le groupe indiqué automatiquement après une fusion.
- * 'nomGroupe' est le nom du nouveau groupe à rejoindre et
- * 'portSuggestion' est un numéro de port fourni dans le message REP. Si ce
- * numéro est positif, il est utilisé pour lancer l'affichage sans attendre
- * la réponse du serveur ; sinon on utilise le port renvoyé par le serveur.
- */
-static void rejoindre_groupe_auto(const char *nomGroupe, int portSuggestion)
-{
-    if (!nomGroupe || nomGroupe[0] == '\0') {
-        printf("Fusion : nom de groupe invalide, impossibilité de rejoindre.\n");
-        return;
-    }
-
-    /* Préparer et envoyer la requête de join au serveur */
-    MessageISY req, rep;
-    memset(&req, 0, sizeof(req));
-    memset(&rep, 0, sizeof(rep));
-    strncpy(req.Ordre, "JNG", ISY_TAILLE_ORDRE - 1);
-    strncpy(req.Emetteur, g_nomUtilisateur, ISY_TAILLE_NOM - 1);
-    strncpy(req.Texte, nomGroupe, ISY_TAILLE_TEXTE - 1);
-
-    envoyer_message_serveur(&req, &rep);
-
-    int newPort = -1;
-    if (strcmp(rep.Ordre, "ACK") == 0) {
-        /* La réponse doit être du type OK <port> */
-        if (sscanf(rep.Texte, "OK %d", &newPort) == 1 && newPort > 0 && newPort <= 65535) {
-            /* port valide obtenu depuis le serveur */
-        }
-    }
-    /* Si on n'a pas obtenu de port depuis le serveur, on utilise la suggestion */
-    if (newPort <= 0 && portSuggestion > 0) {
-        newPort = portSuggestion;
-    }
-    if (newPort <= 0) {
-        printf("Impossible de déterminer le port pour rejoindre le groupe '%s'.\n", nomGroupe);
-        return;
-    }
-
-    /* Fermer l'affichage actuel s'il existe */
-    arreter_affichage();
-
-    /* Mettre à jour les variables globales pour refléter le nouveau groupe actif */
-    g_portGroupeActif = newPort;
-    strncpy(g_nomGroupeActif, nomGroupe, ISY_TAILLE_TEXTE - 1);
-    g_nomGroupeActif[ISY_TAILLE_TEXTE - 1] = '\0';
-
-    /* Lancer la nouvelle fenêtre d'affichage avec le port et le nom utilisateur */
-    printf("Fusion : connexion au nouveau groupe '%s' sur le port %d...\n", g_nomGroupeActif, g_portGroupeActif);
-    /* Utiliser la fonction étendue pour préciser le nom utilisateur */
-    lancer_affichage_ex(g_portGroupeActif, g_nomUtilisateur);
 }
 
 /* ==== Actions du menu ==== */
@@ -345,8 +259,8 @@ static void action_rejoindre_groupe(void)
 
             printf("Succès : Groupe '%s' rejoint sur le port %d\n", g_nomGroupeActif, g_portGroupeActif);
 
-            /* 3. Lancer la fenêtre d'affichage avec le port et le nom utilisateur */
-            lancer_affichage_ex(g_portGroupeActif, g_nomUtilisateur);
+            /* 3. Lancer la fenêtre avec le port ET le nom utilisateur */
+            lancer_affichage(g_portGroupeActif, g_nomUtilisateur);
         }
         else
         {
@@ -361,10 +275,28 @@ static void action_rejoindre_groupe(void)
 
 static void action_dialoguer_groupe(void)
 {
+    /* Aucun groupe actif : l'utilisateur n'a pas rejoint de groupe */
     if (g_portGroupeActif == 0)
     {
         printf("Aucun groupe actif. Rejoindre un groupe d'abord.\n");
         return;
+    }
+
+    /* Vérifier si la fenêtre d'affichage est encore en vie. Si elle a terminé,
+     * cela signifie que le groupe a été supprimé ou quitté par le serveur. Dans
+     * ce cas, on avertit l'utilisateur et on remet les variables à zéro. */
+    if (g_pidAffichage > 0)
+    {
+        pid_t ended = waitpid(g_pidAffichage, NULL, WNOHANG);
+        if (ended == g_pidAffichage)
+        {
+            /* Processus AffichageISY terminé : le groupe n'existe plus */
+            g_pidAffichage = 0;
+            g_portGroupeActif = 0;
+            memset(g_nomGroupeActif, 0, sizeof(g_nomGroupeActif));
+            printf("Votre groupe précédent a été supprimé. Retour au menu principal.\n");
+            return;
+        }
     }
 
     int sockG = creer_socket_udp();
@@ -379,7 +311,7 @@ static void action_dialoguer_groupe(void)
     char buffer[ISY_TAILLE_TEXTE];
     while (1)
     {
-        /* Vérifier d'abord si on a reçu un message BAN ou REP (mode non-bloquant) */
+        /* Vérifier d'abord si on a reçu un message BAN (mode non-bloquant) */
         struct timeval tv_check = {0, 0}; /* Non-bloquant */
         fd_set readfds_check;
         FD_ZERO(&readfds_check);
@@ -395,10 +327,10 @@ static void action_dialoguer_groupe(void)
             if (n > 0)
             {
                 banCheck.Ordre[ISY_TAILLE_ORDRE - 1] = '\0';
-                banCheck.Texte[ISY_TAILLE_TEXTE - 1] = '\0';
-                /* Bannissement : retour immédiat au menu principal */
                 if (strcmp(banCheck.Ordre, "BAN") == 0)
                 {
+                    /* L'utilisateur a été banni : on informe et on revient au menu */
+                    banCheck.Texte[ISY_TAILLE_TEXTE - 1] = '\0';
                     printf("\n\n--- VOUS AVEZ ÉTÉ BANNI ---\n");
                     printf("%s\n", banCheck.Texte);
                     printf("Retour au menu principal...\n");
@@ -409,26 +341,19 @@ static void action_dialoguer_groupe(void)
                     arreter_affichage();
                     return;
                 }
-                /* Message REP provenant du serveur : fusion. On parse le nouveau nom et le port suggéré et on rejoint automatiquement */
-                else if (strcmp(banCheck.Ordre, "REP") == 0)
+                else if (strcmp(banCheck.Ordre, "FIN") == 0)
                 {
-                    char nouveauNom[ISY_TAILLE_TEXTE] = "";
-                    int portSug = -1;
-                    /* Attendu : "Fusion : Rejoignez '<nom>' (port <n>)" */
-                    if (sscanf(banCheck.Texte, "Fusion : Rejoignez '%[^']' (port %d)", nouveauNom, &portSug) == 2)
-                    {
-                        printf("\n\n--- FUSION EN COURS ---\n");
-                        printf("%s\n", banCheck.Texte);
-                        printf("Connexion au nouveau groupe...\n");
-                        printf("------------------------\n\n");
-                        /* Fermeture de la socket du groupe actuel et retour au menu principal */
-                        fermer_socket_udp(sockG);
-                        g_portGroupeActif = 0;
-                        memset(g_nomGroupeActif, 0, sizeof(g_nomGroupeActif));
-                        /* Rejoindre le nouveau groupe automatiquement */
-                        rejoindre_groupe_auto(nouveauNom, portSug);
-                        return;
-                    }
+                    /* Le groupe a été supprimé ou fermé : on affiche le message et on revient au menu */
+                    banCheck.Texte[ISY_TAILLE_TEXTE - 1] = '\0';
+                    printf("\n\n--- LE GROUPE A ÉTÉ SUPPRIMÉ ---\n");
+                    printf("%s\n", banCheck.Texte);
+                    printf("Retour au menu principal...\n");
+                    printf("---------------------------------\n\n");
+                    fermer_socket_udp(sockG);
+                    g_portGroupeActif = 0;
+                    memset(g_nomGroupeActif, 0, sizeof(g_nomGroupeActif));
+                    arreter_affichage();
+                    return;
                 }
             }
         }
@@ -542,24 +467,18 @@ static void action_dialoguer_groupe(void)
                         arreter_affichage();
                         return;
                     }
-                    /* Traiter les messages de redirection (REP) issus d'une fusion */
-                    else if (strcmp(rep.Ordre, "REP") == 0)
+                    /* Traiter la fermeture du groupe */
+                    else if (strcmp(rep.Ordre, "FIN") == 0)
                     {
-                        char nouveauNom[ISY_TAILLE_TEXTE] = "";
-                        int portSug = -1;
-                        if (sscanf(rep.Texte, "Fusion : Rejoignez '%[^']' (port %d)", nouveauNom, &portSug) == 2)
-                        {
-                            printf("\n--- FUSION EN COURS ---\n");
-                            printf("%s\n", rep.Texte);
-                            printf("Connexion au nouveau groupe...\n");
-                            printf("------------------------\n\n");
-                            fermer_socket_udp(sockG);
-                            g_portGroupeActif = 0;
-                            memset(g_nomGroupeActif, 0, sizeof(g_nomGroupeActif));
-                            rejoindre_groupe_auto(nouveauNom, portSug);
-                            return;
-                        }
-                        /* Si le format est inattendu, on ignore */
+                        printf("\n--- LE GROUPE A ÉTÉ SUPPRIMÉ ---\n");
+                        printf("%s\n", rep.Texte);
+                        printf("Retour au menu principal...\n");
+                        printf("---------------------------------\n\n");
+                        fermer_socket_udp(sockG);
+                        g_portGroupeActif = 0;
+                        memset(g_nomGroupeActif, 0, sizeof(g_nomGroupeActif));
+                        arreter_affichage();
+                        return;
                     }
                     /* Ignorer silencieusement les autres types de messages (MSG, etc.) */
                 }
@@ -583,7 +502,7 @@ static void action_dialoguer_groupe(void)
             perror("sendto Client->Groupe");
         }
 
-        /* Vérifier si on a reçu un message BAN ou REP du serveur (mode non-bloquant) */
+        /* Vérifier si on a reçu un message BAN du serveur (mode non-bloquant) */
         struct timeval tv = {0, 50000}; /* 50ms timeout */
         fd_set readfds;
         FD_ZERO(&readfds);
@@ -612,22 +531,17 @@ static void action_dialoguer_groupe(void)
                     arreter_affichage();
                     return;
                 }
-                else if (strcmp(banCheck.Ordre, "REP") == 0)
+                else if (strcmp(banCheck.Ordre, "FIN") == 0)
                 {
-                    char nouveauNom[ISY_TAILLE_TEXTE] = "";
-                    int portSug = -1;
-                    if (sscanf(banCheck.Texte, "Fusion : Rejoignez '%[^']' (port %d)", nouveauNom, &portSug) == 2)
-                    {
-                        printf("\n\n--- FUSION EN COURS ---\n");
-                        printf("%s\n", banCheck.Texte);
-                        printf("Connexion au nouveau groupe...\n");
-                        printf("------------------------\n\n");
-                        fermer_socket_udp(sockG);
-                        g_portGroupeActif = 0;
-                        memset(g_nomGroupeActif, 0, sizeof(g_nomGroupeActif));
-                        rejoindre_groupe_auto(nouveauNom, portSug);
-                        return;
-                    }
+                    printf("\n\n--- LE GROUPE A ÉTÉ SUPPRIMÉ ---\n");
+                    printf("%s\n", banCheck.Texte);
+                    printf("Retour au menu principal...\n");
+                    printf("---------------------------------\n\n");
+                    fermer_socket_udp(sockG);
+                    g_portGroupeActif = 0;
+                    memset(g_nomGroupeActif, 0, sizeof(g_nomGroupeActif));
+                    arreter_affichage();
+                    return;
                 }
             }
         }
