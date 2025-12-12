@@ -303,10 +303,10 @@ int main(void)
         msgReq.Emetteur[ISY_TAILLE_NOM - 1] = '\0';
         msgReq.Texte[ISY_TAILLE_TEXTE - 1] = '\0';
 
-        /* Validation du champ Ordre (uniquement requêtes attendues) */
-        if (!valider_ordre_requete_serveur(msgReq.Ordre))
+        /* Validation du champ Ordre */
+        if (!valider_ordre(msgReq.Ordre))
         {
-            fprintf(stderr, "Ordre requete non attendu recu: '%s', ignore\n", msgReq.Ordre);
+            fprintf(stderr, "Ordre invalide recu: '%s', ignore\n", msgReq.Ordre);
             continue;
         }
 

@@ -159,31 +159,6 @@ static inline int valider_ordre(const char *ordre)
     return 0; /* Ordre inconnu */
 }
 
-/* Validation d'un ordre REQUETE (côté ServeurISY) */
-static inline int valider_ordre_requete_serveur(const char *ordre)
-{
-    const char *req_valides[] = {
-        "CON", "DEC", "CRG", "LST", "JNG", "DEL", "FUS",
-        NULL};
-
-    if (!ordre || ordre[0] == '\0')
-        return 0;
-
-    /* Majuscules uniquement (même logique que valider_ordre) */
-    for (int i = 0; ordre[i] != '\0' && i < ISY_TAILLE_ORDRE - 1; ++i)
-    {
-        if (ordre[i] < 'A' || ordre[i] > 'Z')
-            return 0;
-    }
-
-    for (int i = 0; req_valides[i] != NULL; ++i)
-    {
-        if (strcmp(ordre, req_valides[i]) == 0)
-            return 1;
-    }
-    return 0;
-}
-
 /* Validation d'un nom (utilisateur ou groupe) */
 static inline int valider_nom(const char *nom)
 {
