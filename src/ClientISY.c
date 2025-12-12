@@ -78,18 +78,24 @@ static void lancer_affichage(int portGroupe, const char *nomClient)
             exit(EXIT_FAILURE);
         }
 
-        /* * Modification de la commande Shell pour inclure le nomClient
-         * Exemple resultat : cd /home/user/projet && ./bin/AffichageISY 12345 "Paul"
-         */
-        char shell_command[1024 + 128];
-        snprintf(shell_command, sizeof(shell_command),
-                 "cd %s && ./bin/AffichageISY %s \"%s\"",
-                 cwd, portStr, nomClient);
+        /* Change to working directory first */
+        if (chdir(cwd) < 0)
+        {
+            perror("chdir");
+            exit(EXIT_FAILURE);
+        }
 
-        /* Lancement via xterm (ou gnome-terminal selon votre choix précédent) */
+        /* Close inherited socket before exec to prevent fd leak */
+        extern int sock_client;
+        if (sock_client >= 0)
+        {
+            close(sock_client);
+        }
+
+        /* Lancement via xterm avec arguments directs (pas de shell, pas d'injection) */
         execlp("xterm", "xterm",
                "-T", "AffichageISY",
-               "-e", "/bin/bash", "-c", shell_command,
+               "-e", "./bin/AffichageISY", portStr, nomClient,
                (char *)NULL);
 
         perror("execlp");
@@ -128,8 +134,12 @@ static void action_creer_groupe(void)
     if (fgets(req.Texte, ISY_TAILLE_TEXTE, stdin) == NULL)
         return;
     /* Vider le buffer si l'utilisateur a tapé plus que prévu */
-    if (strchr(req.Texte, '\n') == NULL)
+    int was_truncated = (strchr(req.Texte, '\n') == NULL);
+    if (was_truncated)
+    {
         vider_stdin();
+        printf(">> Attention: Le nom du groupe a ete tronque.\n");
+    }
     req.Texte[strcspn(req.Texte, "\n")] = '\0';
 
     envoyer_message_serveur(&req, &rep);
@@ -178,8 +188,8 @@ static void action_rejoindre_groupe(void)
     if (strcmp(rep.Ordre, "ACK") == 0)
     {
         /* rep.Texte = "OK <port>" */
-        int port = 0;
-        if (sscanf(rep.Texte, "OK %d", &port) == 1)
+        int port = -1;
+        if (sscanf(rep.Texte, "OK %d", &port) == 1 && port > 0 && port <= 65535)
         {
 
             /* 1. Fermer l'ancienne fenêtre si elle existe */
@@ -226,6 +236,38 @@ static void action_dialoguer_groupe(void)
     char buffer[ISY_TAILLE_TEXTE];
     while (1)
     {
+        /* Vérifier d'abord si on a reçu un message BAN (mode non-bloquant) */
+        struct timeval tv_check = {0, 0}; /* Non-bloquant */
+        fd_set readfds_check;
+        FD_ZERO(&readfds_check);
+        FD_SET(sockG, &readfds_check);
+
+        if (select(sockG + 1, &readfds_check, NULL, NULL, &tv_check) > 0)
+        {
+            MessageISY banCheck;
+            struct sockaddr_in addrTmp;
+            socklen_t lenTmp = sizeof(addrTmp);
+            ssize_t n = recvfrom(sockG, &banCheck, sizeof(banCheck), 0,
+                                (struct sockaddr *)&addrTmp, &lenTmp);
+            if (n > 0)
+            {
+                banCheck.Ordre[ISY_TAILLE_ORDRE - 1] = '\0';
+                if (strcmp(banCheck.Ordre, "BAN") == 0)
+                {
+                    banCheck.Texte[ISY_TAILLE_TEXTE - 1] = '\0';
+                    printf("\n\n--- VOUS AVEZ ÉTÉ BANNI ---\n");
+                    printf("%s\n", banCheck.Texte);
+                    printf("Retour au menu principal...\n");
+                    printf("----------------------------\n\n");
+                    fermer_socket_udp(sockG);
+                    g_portGroupeActif = 0;
+                    memset(g_nomGroupeActif, 0, sizeof(g_nomGroupeActif));
+                    arreter_affichage();
+                    return;
+                }
+            }
+        }
+
         printf("Message : ");
         if (fgets(buffer, sizeof(buffer), stdin) == NULL)
             break;
@@ -243,7 +285,7 @@ static void action_dialoguer_groupe(void)
             while (1)
             {
                 char cmdBuf[ISY_TAILLE_TEXTE];
-                printf("Commande : ");
+                printf("Commande (tapez 'help' pour lister les commandes): ");
                 if (fgets(cmdBuf, sizeof(cmdBuf), stdin) == NULL)
                     break;
                 /* Vider le buffer si l'utilisateur a tapé plus que prévu */
@@ -320,6 +362,21 @@ static void action_dialoguer_groupe(void)
                         printf("\n%s\n", rep.Texte);
                         received_response = 1;
                     }
+                    /* Traiter les messages de bannissement */
+                    else if (strcmp(rep.Ordre, "BAN") == 0)
+                    {
+                        printf("\n--- VOUS AVEZ ÉTÉ BANNI ---\n");
+                        printf("%s\n", rep.Texte);
+                        printf("Retour au menu principal...\n");
+                        printf("----------------------------\n\n");
+                        /* Fermer et revenir au menu */
+                        fermer_socket_udp(sockG);
+                        g_portGroupeActif = 0;
+                        memset(g_nomGroupeActif, 0, sizeof(g_nomGroupeActif));
+                        /* Arrêter l'affichage aussi */
+                        arreter_affichage();
+                        return;
+                    }
                     /* Ignorer silencieusement les autres types de messages (MSG, etc.) */
                 }
             }
@@ -340,6 +397,38 @@ static void action_dialoguer_groupe(void)
                    (struct sockaddr *)&addrG, sizeof(addrG)) < 0)
         {
             perror("sendto Client->Groupe");
+        }
+
+        /* Vérifier si on a reçu un message BAN du serveur (mode non-bloquant) */
+        struct timeval tv = {0, 50000}; /* 50ms timeout */
+        fd_set readfds;
+        FD_ZERO(&readfds);
+        FD_SET(sockG, &readfds);
+
+        if (select(sockG + 1, &readfds, NULL, NULL, &tv) > 0)
+        {
+            MessageISY banCheck;
+            struct sockaddr_in addrTmp;
+            socklen_t lenTmp = sizeof(addrTmp);
+            ssize_t n = recvfrom(sockG, &banCheck, sizeof(banCheck), 0,
+                                (struct sockaddr *)&addrTmp, &lenTmp);
+            if (n > 0)
+            {
+                banCheck.Ordre[ISY_TAILLE_ORDRE - 1] = '\0';
+                if (strcmp(banCheck.Ordre, "BAN") == 0)
+                {
+                    banCheck.Texte[ISY_TAILLE_TEXTE - 1] = '\0';
+                    printf("\n\n--- VOUS AVEZ ÉTÉ BANNI ---\n");
+                    printf("%s\n", banCheck.Texte);
+                    printf("Retour au menu principal...\n");
+                    printf("----------------------------\n\n");
+                    fermer_socket_udp(sockG);
+                    g_portGroupeActif = 0;
+                    memset(g_nomGroupeActif, 0, sizeof(g_nomGroupeActif));
+                    arreter_affichage();
+                    return;
+                }
+            }
         }
     }
 
@@ -368,8 +457,11 @@ static void action_quitter_groupe(void)
             strncpy(msg.Emetteur, g_nomUtilisateur, ISY_TAILLE_NOM - 1);
             strncpy(msg.Texte, "quit", ISY_TAILLE_TEXTE - 1);
             /* Envoi sans attendre de réponse car on ferme ensuite */
-            sendto(sockTmp, &msg, sizeof(msg), 0,
-                   (struct sockaddr *)&addrG, sizeof(addrG));
+            if (sendto(sockTmp, &msg, sizeof(msg), 0,
+                       (struct sockaddr *)&addrG, sizeof(addrG)) < 0)
+            {
+                perror("sendto quit notification");
+            }
             fermer_socket_udp(sockTmp);
         }
     }
@@ -526,6 +618,12 @@ static int login_au_serveur(void)
         printf("Erreur : Le serveur est complet.\n");
         return 0; // Échec
     }
+    else if (strcmp(rep.Texte, "INVALID") == 0)
+    {
+        printf("Erreur : Le pseudo contient des caracteres invalides.\n");
+        printf("Utilisez uniquement : lettres, chiffres, _, -, .\n");
+        return 0; // Échec
+    }
     else
     {
         printf("Erreur inconnue lors de la connexion : %s\n", rep.Texte);
@@ -558,7 +656,8 @@ static void nettoyer_ecran(void)
 static void vider_stdin(void)
 {
     int c;
-    while ((c = getchar()) != '\n' && c != EOF);
+    while ((c = getchar()) != '\n' && c != EOF)
+        ;
 }
 
 static void pause_console(void)
@@ -607,6 +706,21 @@ int main(void)
         {
             printf(">> Le nom ne peut pas etre vide.\n");
             continue;
+        }
+
+        /* Validation du nom d'utilisateur */
+        if (!valider_nom(input))
+        {
+            printf(">> Nom invalide. Utilisez uniquement lettres, chiffres, _, -, .\n");
+            printf(">> Le nom doit faire moins de %d caracteres.\n", ISY_TAILLE_NOM);
+            continue;
+        }
+
+        /* Avertir si le nom sera tronqué */
+        size_t input_len = strlen(input);
+        if (input_len >= ISY_TAILLE_NOM)
+        {
+            printf(">> Attention: Le nom sera tronque a %d caracteres.\n", ISY_TAILLE_NOM - 1);
         }
 
         strncpy(g_nomUtilisateur, input, ISY_TAILLE_NOM - 1);

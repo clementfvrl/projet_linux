@@ -16,6 +16,7 @@
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <sys/socket.h>
+#include <sys/time.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
 
@@ -72,14 +73,26 @@ typedef struct
  * copie, ce qui respecte la contrainte des 4 fichiers .c.
  */
 
-/* Création d'un socket UDP */
+/* Création d'un socket UDP avec timeout de réception */
 static inline int creer_socket_udp(void)
 {
     int sock = socket(AF_INET, SOCK_DGRAM, 0);
     if (sock < 0)
     {
         perror("socket");
+        return sock;
     }
+
+    /* Configurer un timeout de réception de 5 secondes pour éviter les blocages infinis */
+    struct timeval tv;
+    tv.tv_sec = 5;
+    tv.tv_usec = 0;
+    if (setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv)) < 0)
+    {
+        perror("setsockopt SO_RCVTIMEO");
+        /* Non fatal, on continue */
+    }
+
     return sock;
 }
 
@@ -109,6 +122,65 @@ static inline void afficher_message_debug(const char *prefix,
 {
     printf("[%s] Ordre='%s' Emetteur='%s' Texte='%s'\n",
            prefix, msg->Ordre, msg->Emetteur, msg->Texte);
+}
+
+/* Validation d'un champ Ordre */
+static inline int valider_ordre(const char *ordre)
+{
+    /* Liste des ordres valides */
+    const char *ordres_valides[] = {
+        "LST", "CRG", "JNG", "ACK", "ERR", "MSG", "CMD", "REG",
+        "FIN", "BAN", "RSP", "CON", "DEC", "DEL", "FUS", "REP",
+        NULL
+    };
+
+    if (!ordre || ordre[0] == '\0') {
+        return 0;
+    }
+
+    /* Vérifier que le champ contient uniquement des lettres majuscules */
+    for (int i = 0; ordre[i] != '\0' && i < ISY_TAILLE_ORDRE - 1; ++i) {
+        if (ordre[i] < 'A' || ordre[i] > 'Z') {
+            return 0;
+        }
+    }
+
+    /* Vérifier que l'ordre est dans la liste */
+    for (int i = 0; ordres_valides[i] != NULL; ++i) {
+        if (strcmp(ordre, ordres_valides[i]) == 0) {
+            return 1;
+        }
+    }
+
+    return 0; /* Ordre inconnu */
+}
+
+/* Validation d'un nom (utilisateur ou groupe) */
+static inline int valider_nom(const char *nom)
+{
+    if (!nom || nom[0] == '\0') {
+        return 0; /* Nom vide */
+    }
+
+    /* Vérifier que le nom contient uniquement des caractères autorisés */
+    for (int i = 0; nom[i] != '\0'; ++i) {
+        char c = nom[i];
+        /* Autoriser : lettres, chiffres, underscore, tiret, point */
+        if (!((c >= 'a' && c <= 'z') ||
+              (c >= 'A' && c <= 'Z') ||
+              (c >= '0' && c <= '9') ||
+              c == '_' || c == '-' || c == '.')) {
+            return 0; /* Caractère invalide */
+        }
+    }
+
+    /* Vérifier la longueur */
+    size_t len = strlen(nom);
+    if (len >= ISY_TAILLE_NOM) {
+        return 0; /* Trop long */
+    }
+
+    return 1; /* Valide */
 }
 
 /* Chiffrement César simple sur les lettres (a-z, A-Z) */

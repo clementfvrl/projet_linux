@@ -5,6 +5,7 @@
 
 #include "commun.h"
 #include <signal.h>
+#include <time.h>
 
 struct UserInfo {
     char nom[ISY_TAILLE_NOM];
@@ -58,7 +59,12 @@ static int lancer_groupe_process(int idGroupe)
         return -1;
     }
     if (pid == 0) {
-        /* Processus fils : execl GroupeISY */
+        /* Processus fils : fermer le socket hérité du serveur */
+        if (sock_serveur >= 0) {
+            close(sock_serveur);
+        }
+
+        /* execl GroupeISY */
         char portStr[16];
         snprintf(portStr, sizeof(portStr), "%d", g_groupes[idGroupe].port);
         /* Passer aussi le nom du modérateur en argument */
@@ -77,6 +83,14 @@ static void traiter_creation_groupe(const MessageISY *msgReq,
 {
     /* msgReq->Texte = nom groupe */
     const char *nomG = msgReq->Texte;
+
+    /* Validation du nom de groupe */
+    if (!valider_nom(nomG)) {
+        snprintf(msgRep->Ordre, ISY_TAILLE_ORDRE, "ERR");
+        snprintf(msgRep->Texte, ISY_TAILLE_TEXTE,
+                 "Nom de groupe invalide (lettres, chiffres, _, -, . uniquement)");
+        return;
+    }
 
     if (trouver_groupe_par_nom(nomG) >= 0) {
         snprintf(msgRep->Ordre, ISY_TAILLE_ORDRE, "ERR");
@@ -121,20 +135,26 @@ static void traiter_liste_groupes(MessageISY *msgRep)
     msgRep->Texte[0] = '\0';
 
     char line[64];
-    int first = 1;
+    int found = 0;
+    size_t current_len = 0;
+
     for (int i = 0; i < ISY_MAX_GROUPES; ++i) {
         if (g_groupes[i].actif) {
             snprintf(line, sizeof(line), "%s (port %d)\n",
                      g_groupes[i].nom, g_groupes[i].port);
-            if (strlen(msgRep->Texte) + strlen(line) < ISY_TAILLE_TEXTE) {
-                strcat(msgRep->Texte, line);
+            size_t line_len = strlen(line);
+
+            /* Vérification sécurisée avec espace pour null terminator */
+            if (current_len + line_len + 1 <= ISY_TAILLE_TEXTE) {
+                strcpy(msgRep->Texte + current_len, line);
+                current_len += line_len;
+                found = 1;
             } else {
                 break; /* buffer plein, on coupe */
             }
-            first = 0;
         }
     }
-    if (first) {
+    if (!found) {
         strncpy(msgRep->Texte, "Aucun groupe\n", ISY_TAILLE_TEXTE - 1);
         msgRep->Texte[ISY_TAILLE_TEXTE - 1] = '\0';
     }
@@ -169,13 +189,44 @@ static void sigint_handler(int sig)
     g_stop = 1;
 }
 
+/* Handler SIGCHLD pour éviter les zombies */
+static void sigchld_handler(int sig)
+{
+    (void)sig;
+    /* Récolter tous les processus fils terminés (non-bloquant) */
+    int saved_errno = errno;
+    while (waitpid(-1, NULL, WNOHANG) > 0) {
+        /* Continue à récolter tant qu'il y a des processus terminés */
+    }
+    errno = saved_errno;
+}
+
 /* ==== MAIN ==== */
 int main(void)
 {
     struct sockaddr_in addrServ, addrCli;
     socklen_t lenCli = sizeof(addrCli);
 
-    signal(SIGINT, sigint_handler);
+    /* Installation des handlers de signaux avec sigaction (plus sûr que signal) */
+    struct sigaction sa_int, sa_chld;
+
+    /* Handler SIGINT */
+    sa_int.sa_handler = sigint_handler;
+    sigemptyset(&sa_int.sa_mask);
+    sa_int.sa_flags = 0;
+    if (sigaction(SIGINT, &sa_int, NULL) < 0) {
+        perror("sigaction SIGINT");
+        exit(EXIT_FAILURE);
+    }
+
+    /* Handler SIGCHLD */
+    sa_chld.sa_handler = sigchld_handler;
+    sigemptyset(&sa_chld.sa_mask);
+    sa_chld.sa_flags = SA_RESTART | SA_NOCLDSTOP; /* SA_RESTART pour éviter EINTR, SA_NOCLDSTOP pour ignorer les STOP */
+    if (sigaction(SIGCHLD, &sa_chld, NULL) < 0) {
+        perror("sigaction SIGCHLD");
+        exit(EXIT_FAILURE);
+    }
 
     init_groupes();
     /* --- AJOUT : Initialisation du tableau des utilisateurs à 0 --- */
@@ -189,6 +240,7 @@ int main(void)
     init_sockaddr(&addrServ, ISY_IP_SERVEUR, ISY_PORT_SERVEUR);
     if (bind(sock_serveur, (struct sockaddr *)&addrServ, sizeof(addrServ)) < 0) {
         perror("bind ServeurISY");
+        fprintf(stderr, "Impossible de se lier au port %d. Verifiez qu'aucun autre processus n'utilise ce port.\n", ISY_PORT_SERVEUR);
         close(sock_serveur);
         exit(EXIT_FAILURE);
     }
@@ -202,13 +254,30 @@ int main(void)
                              (struct sockaddr *)&addrCli, &lenCli);
         if (n < 0) {
             if (errno == EINTR && g_stop) break;
+            if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                /* Timeout atteint, pas d'erreur, on continue */
+                continue;
+            }
             perror("recvfrom ServeurISY");
+            continue;
+        }
+
+        /* Validation de la taille du message reçu */
+        if ((size_t)n != sizeof(msgReq)) {
+            fprintf(stderr, "Message incomplet recu (%zd octets au lieu de %zu), ignore\n",
+                    n, sizeof(msgReq));
             continue;
         }
 
         msgReq.Ordre[ISY_TAILLE_ORDRE - 1] = '\0';
         msgReq.Emetteur[ISY_TAILLE_NOM - 1] = '\0';
         msgReq.Texte[ISY_TAILLE_TEXTE - 1] = '\0';
+
+        /* Validation du champ Ordre */
+        if (!valider_ordre(msgReq.Ordre)) {
+            fprintf(stderr, "Ordre invalide recu: '%s', ignore\n", msgReq.Ordre);
+            continue;
+        }
 
         printf("\n--- Recu du client ---\n");
         afficher_message_debug("Serveur", &msgReq);
@@ -218,10 +287,15 @@ int main(void)
 
         /* --- AJOUT : Logique de Connexion (CON) --- */
         if (strcmp(msgReq.Ordre, "CON") == 0) {
-            int existe = 0;
-            int libre_idx = -1;
+            /* Validation du nom d'utilisateur */
+            if (!valider_nom(msgReq.Emetteur)) {
+                snprintf(msgRep.Ordre, ISY_TAILLE_ORDRE, "REP");
+                snprintf(msgRep.Texte, ISY_TAILLE_TEXTE, "INVALID");
+            } else {
+                int existe = 0;
+                int libre_idx = -1;
 
-            /* Vérification unicité */
+                /* Vérification unicité */
             for (int i = 0; i < ISY_MAX_MEMBRES; i++) {
                 if (g_users[i].actif && strncmp(g_users[i].nom, msgReq.Emetteur, ISY_TAILLE_NOM) == 0) {
                     existe = 1;
@@ -244,7 +318,8 @@ int main(void)
             } else {
                 snprintf(msgRep.Texte, ISY_TAILLE_TEXTE, "FULL"); /* Serveur plein */
             }
-        
+            } /* Fin du else de validation */
+
         /* --- AJOUT : Logique de Déconnexion (DEC) --- */
         } else if (strcmp(msgReq.Ordre, "DEC") == 0) {
             for (int i = 0; i < ISY_MAX_MEMBRES; i++) {
@@ -277,20 +352,41 @@ int main(void)
                 snprintf(msgRep.Texte, ISY_TAILLE_TEXTE, "Refuse : vous n'etes pas moderateur");
             } 
             else {
-                /* 1. Tuer le processus de groupe */
-                if (g_groupes[idx].pid > 0) {
-                    kill(g_groupes[idx].pid, SIGINT);
-                    waitpid(g_groupes[idx].pid, NULL, 0); // Attendre la fin propre du fils pour éviter zombie
+                /* 1. AVANT de tuer le processus, envoyer une notification DEL aux membres */
+                MessageISY delMsg;
+                memset(&delMsg, 0, sizeof(delMsg));
+                strncpy(delMsg.Ordre, "DEC", ISY_TAILLE_ORDRE - 1); /* DEC = Déconnexion forcée */
+                strncpy(delMsg.Emetteur, "SYSTEM", ISY_TAILLE_NOM - 1);
+                snprintf(delMsg.Texte, ISY_TAILLE_TEXTE,
+                         "Le groupe '%s' a été supprimé par le modérateur", msgReq.Texte);
+
+                struct sockaddr_in addrG;
+                init_sockaddr(&addrG, ISY_IP_SERVEUR, g_groupes[idx].port);
+                if (sendto(sock_serveur, &delMsg, sizeof(delMsg), 0,
+                          (struct sockaddr *)&addrG, sizeof(addrG)) < 0) {
+                    perror("sendto DEC suppression");
                 }
-                
-                /* 2. Nettoyer la structure */
+
+                /* Petit délai pour s'assurer que le message DEC est traité */
+                struct timespec delay = {0, 200000000}; /* 200ms */
+                nanosleep(&delay, NULL);
+
+                /* 2. Tuer le processus de groupe */
+                if (g_groupes[idx].pid > 0) {
+                    if (kill(g_groupes[idx].pid, SIGINT) < 0) {
+                        perror("kill SIGINT");
+                    }
+                    /* Note: SIGCHLD handler se charge de récolter le zombie */
+                }
+
+                /* 3. Nettoyer la structure */
                 g_groupes[idx].actif = 0;
                 g_groupes[idx].port = 0;
                 g_groupes[idx].nom[0] = '\0';
                 g_groupes[idx].moderateurName[0] = '\0';
                 g_groupes[idx].pid = 0;
 
-                /* 3. REPONSE CRUCIALE : "OK" pour que le client ferme sa fenêtre */
+                /* 4. REPONSE CRUCIALE : "OK" pour que le client ferme sa fenêtre */
                 snprintf(msgRep.Ordre, ISY_TAILLE_ORDRE, "OK");
                 snprintf(msgRep.Texte, ISY_TAILLE_TEXTE, "Groupe supprime");
             }
@@ -317,9 +413,33 @@ int main(void)
                                  "Fusion refusée : vous devez être modérateur des deux groupes");
                     } else {
                         /* Fusion de g2 dans g1 */
+
+                        /* AVANT de tuer g2, envoyer un message REP aux membres de g2
+                         * pour leur indiquer vers quel groupe se rediriger */
+                        MessageISY repMsg;
+                        memset(&repMsg, 0, sizeof(repMsg));
+                        strncpy(repMsg.Ordre, "REP", ISY_TAILLE_ORDRE - 1);
+                        strncpy(repMsg.Emetteur, "SYSTEM", ISY_TAILLE_NOM - 1);
+                        snprintf(repMsg.Texte, ISY_TAILLE_TEXTE,
+                                 "Fusion : Rejoignez '%s' (port %d)", g1, g_groupes[idx1].port);
+
+                        struct sockaddr_in addrG2;
+                        init_sockaddr(&addrG2, ISY_IP_SERVEUR, g_groupes[idx2].port);
+                        if (sendto(sock_serveur, &repMsg, sizeof(repMsg), 0,
+                                  (struct sockaddr *)&addrG2, sizeof(addrG2)) < 0) {
+                            perror("sendto REP fusion");
+                        }
+
+                        /* Petit délai pour s'assurer que le message REP est traité */
+                        struct timespec delay = {0, 200000000}; /* 200ms */
+                        nanosleep(&delay, NULL);
+
+                        /* Maintenant on peut tuer le processus g2 */
                         if (g_groupes[idx2].pid > 0) {
-                            kill(g_groupes[idx2].pid, SIGINT);
-                            waitpid(g_groupes[idx2].pid, NULL, 0);
+                            if (kill(g_groupes[idx2].pid, SIGINT) < 0) {
+                                perror("kill SIGINT (fusion)");
+                            }
+                            /* Note: SIGCHLD handler se charge de récolter le zombie */
                         }
                         g_groupes[idx2].actif = 0;
                         g_groupes[idx2].port = 0;
@@ -332,15 +452,19 @@ int main(void)
                         memset(&notif, 0, sizeof(notif));
                         strncpy(notif.Ordre, "MSG", ISY_TAILLE_ORDRE - 1);
                         strncpy(notif.Emetteur, "SYSTEM", ISY_TAILLE_NOM - 1);
-                        snprintf(notif.Texte, ISY_TAILLE_TEXTE, "Les groupes '%s' et '%s' ont été fusionnés", g1, g2);
+                        snprintf(notif.Texte, ISY_TAILLE_TEXTE, "Le groupe '%s' a fusionné avec ce groupe", g2);
+                        /* Chiffrer le message SYSTEM avant envoi */
+                        cesar_chiffrer(notif.Texte);
                         struct sockaddr_in addrG1;
                         init_sockaddr(&addrG1, ISY_IP_SERVEUR, g_groupes[idx1].port);
                         /* Envoi du message au processus GroupeISY pour diffusion */
-                        sendto(sock_serveur, &notif, sizeof(notif), 0, (struct sockaddr *)&addrG1, sizeof(addrG1));
+                        if (sendto(sock_serveur, &notif, sizeof(notif), 0, (struct sockaddr *)&addrG1, sizeof(addrG1)) < 0) {
+                            perror("sendto notification fusion");
+                        }
 
                         snprintf(msgRep.Ordre, ISY_TAILLE_ORDRE, "ACK");
                         snprintf(msgRep.Texte, ISY_TAILLE_TEXTE,
-                                 "Groupes '%s' et '%s' fusionnes (membres de %s doivent se reconnecter)", g1, g2, g1);
+                                 "Fusion effectuee : '%s' absorbe '%s'", g1, g2);
                     }
                 }
             }

@@ -1,6 +1,6 @@
 CC      = gcc
-# CFLAGS  = -Wall -Wextra -std=c11 -Iinclude -D_POSIX_C_SOURCE
-CFLAGS  = -std=c11 -Iinclude -D_POSIX_C_SOURCE
+# CFLAGS  = -Wall -Wextra -std=c11 -Iinclude -D_POSIX_C_SOURCE=200809L
+CFLAGS  = -std=c11 -Iinclude -D_POSIX_C_SOURCE=200809L
 LDFLAGS = 
 
 SRC_DIR = src

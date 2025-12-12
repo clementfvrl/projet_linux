@@ -16,7 +16,14 @@ int main(int argc, char *argv[])
         exit(EXIT_FAILURE);
     }
 
-    int portGroupe = atoi(argv[1]);
+    /* Validation du port avec strtol au lieu de atoi */
+    char *endptr;
+    long port_long = strtol(argv[1], &endptr, 10);
+    if (*endptr != '\0' || port_long < 1024 || port_long > 65535) {
+        fprintf(stderr, "Erreur: Port invalide '%s' (doit etre entre 1024 et 65535)\n", argv[1]);
+        exit(EXIT_FAILURE);
+    }
+    int portGroupe = (int)port_long;
     char *monNom = argv[2]; /* On récupère le nom passé en paramètre */
 
     printf("AffichageISY : inscription sur le port %d pour %s\n", portGroupe, monNom);
@@ -58,8 +65,21 @@ int main(int argc, char *argv[])
     while (1)
     {
         ssize_t n = recvfrom(sock, &msg, sizeof(msg), 0, (struct sockaddr *)&addrExp, &lenExp);
-        if (n < 0)
+        if (n < 0) {
+            if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                /* Timeout atteint, pas d'erreur, on continue */
+                continue;
+            }
+            perror("recvfrom AffichageISY");
             continue;
+        }
+
+        /* Validation de la taille du message reçu */
+        if ((size_t)n != sizeof(msg)) {
+            fprintf(stderr, "AffichageISY: Message incomplet recu (%zd octets au lieu de %zu), ignore\n",
+                    n, sizeof(msg));
+            continue;
+        }
 
         msg.Ordre[ISY_TAILLE_ORDRE - 1] = '\0';
         msg.Emetteur[ISY_TAILLE_NOM - 1] = '\0';
