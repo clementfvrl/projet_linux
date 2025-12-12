@@ -1,0 +1,31 @@
+@startuml
+title Quitter Groupe
+
+actor Utilisateur as User
+actor Moderateur as Moderateur
+usecase (Se loguer)
+usecase (Renseigner Groupe)
+usecase (Verifier \n appartenance)
+usecase (Confirmer \n action)
+usecase (Supprimer utilisateur \n du groupe)
+usecase (Notifier \n membres du groupe)
+usecase (Interroger moderateur)
+
+(Se loguer) <.. (Quitter Groupe) : <<extend>> 
+
+note top of  (Se loguer) : "Si pas encore logué"
+
+(User) -- (Quitter Groupe)
+(Moderateur) -- (Interroger moderateur)
+
+(Renseigner Groupe) <.. (Quitter Groupe) : <<include>>
+(Verifier \n appartenance)<..(Quitter Groupe) : <<include>>
+(Confirmer \n action) <.. (Quitter Groupe) : <<include>>
+(Supprimer utilisateur \n du groupe) ..> (Quitter Groupe) : <<extend>>
+note top of  (Supprimer utilisateur \n du groupe) : "Si tout les <<include>>s sont valides"
+(Notifier \n membres du groupe) ..> (Quitter Groupe) : <<extend>>
+
+note top of  (Interroger moderateur) : "Si tout les <<include>>s sont valides"
+(Interroger moderateur) <.. (Quitter Groupe) : <<include>>
+
+@enduml
