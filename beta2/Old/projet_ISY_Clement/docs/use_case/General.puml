@@ -1,0 +1,25 @@
+@startuml
+
+actor Gestionnaire as Admin
+actor Utilisateur as User
+
+User <|-down- Admin
+
+left to right direction
+package Administration {
+:Admin: -- (Supprimer un groupe)
+:Admin: -- (Fusionner deux groupes)
+:Admin: -- (Modérer un membre)
+}
+
+package Utilisation {
+:User: -- (Créer groupe)
+:User: -- (Lister les groupes)
+:User: -- (Rejoindre un groupe)
+:User: -- (Quitter un groupe)
+:User: -- (Ecrire un message à un  groupe)
+:User: -- (Lire les messages d'un groupe)
+:User: -- (Lister les membres d'un groupe)
+}
+
+@enduml

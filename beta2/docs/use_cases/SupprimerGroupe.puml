@@ -1,0 +1,20 @@
+@startuml
+actor Utilisateur as User
+top to bottom direction
+usecase (Supprimer groupe) as create
+:User: -right- create
+(Se loguer) ..> create :  << extends >>  
+note top of  (Se loguer) : "Si pas encore logué"
+(Vérifier Droit Administration) <.. create : << include >>
+(Renseigner Groupe) <.. create :  << include >>
+(Vérifier Groupe) <.. create :  << include >>
+(Confirmer Suppresion) <.. create :  << include >>
+(Supprimer Groupe) ..> create :  << extends >>
+note top of  (Supprimer Groupe) : "Si tout les includes sont valides" 
+(Notifier Groupe) ..> create :  << extends >>
+(Libérer Ressources) ..> create :  << extends >>
+(Archiver Stats) ..> create :  << extends >>
+
+@enduml
+
+
