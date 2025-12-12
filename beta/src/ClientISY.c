@@ -6,7 +6,6 @@
 #include "commun.h"
 
 #include <ctype.h> /* pour tolower dans le mode commande */
-#include <fcntl.h> /* pour O_NONBLOCK */
 
 static int sock_client = -1;
 static struct sockaddr_in addrServeur;
@@ -53,6 +52,90 @@ static void envoyer_message_serveur(const MessageISY *msgReq,
     msgRep->Ordre[ISY_TAILLE_ORDRE - 1] = '\0';
     msgRep->Emetteur[ISY_TAILLE_NOM - 1] = '\0';
     msgRep->Texte[ISY_TAILLE_TEXTE - 1] = '\0';
+}
+
+/*
+ * Vérifie et traite les notifications système en provenance du processus
+ * GroupeISY. Cette fonction doit être appelée après l'envoi d'un message
+ * (MSG ou CMD) afin de capturer des ordres asynchrones tels que :
+ *   - MIG : migration vers un nouveau port lors d'une fusion de groupes
+ *   - BAN : bannissement du membre, fermeture immédiate du chat
+ *   - FIN : dissolution du groupe par le modérateur
+ *
+ * Le paramètre `sock` est un pointeur sur la socket UDP courante pour
+ * permettre sa recréation en cas de migration. L'adresse `addrG` est
+ * également mise à jour. La fonction retourne 1 si un événement
+ * (bannissement ou dissolution) impose de quitter le mode courant,
+ * sinon 0.
+ */
+static int verifier_messages_systeme(int *sock, struct sockaddr_in *addrG)
+{
+    int evenement = 0;
+    while (1)
+    {
+        MessageISY rep;
+        struct sockaddr_in addrExp;
+        socklen_t lenExp = sizeof(addrExp);
+        ssize_t n = recvfrom(*sock, &rep, sizeof(rep), MSG_DONTWAIT,
+                              (struct sockaddr *)&addrExp, &lenExp);
+        if (n < 0)
+        {
+            /* Aucun message supplémentaire en attente */
+            break;
+        }
+
+        rep.Ordre[ISY_TAILLE_ORDRE - 1] = '\0';
+        rep.Emetteur[ISY_TAILLE_NOM - 1] = '\0';
+        rep.Texte[ISY_TAILLE_TEXTE - 1] = '\0';
+
+        if (strcmp(rep.Ordre, "MIG") == 0)
+        {
+            int newPort = atoi(rep.Texte);
+            if (newPort > 0 && newPort != g_portGroupeActif)
+            {
+                printf("\n--- Fusion : migration automatique vers le port %d ---\n", newPort);
+                /* Fermer l'ancienne socket et l'affichage */
+                fermer_socket_udp(*sock);
+                arreter_affichage();
+                /* Mise à jour globale du port */
+                g_portGroupeActif = newPort;
+                /* Mettre à jour la structure d'adresse */
+                init_sockaddr(addrG, ISY_IP_SERVEUR, g_portGroupeActif);
+                /* Relancer l'affichage sur le nouveau port */
+                lancer_affichage(g_portGroupeActif, g_nomUtilisateur);
+                /* Recréation de la socket pour le chat */
+                *sock = creer_socket_udp();
+                if (*sock < 0)
+                {
+                    fprintf(stderr, "Erreur : impossible de créer le socket après migration.\n");
+                    evenement = 1;
+                    break;
+                }
+                /* Continuer la boucle pour consommer d'éventuels autres ordres MIG */
+                continue;
+            }
+        }
+        else if (strcmp(rep.Ordre, "BAN") == 0)
+        {
+            /* Bannissement reçu : quitter immédiatement */
+            printf("\n--- %s ---\n", rep.Texte);
+            printf("Vous avez été exclu du groupe.\n");
+            fermer_socket_udp(*sock);
+            evenement = 1;
+            break;
+        }
+        else if (strcmp(rep.Ordre, "FIN") == 0)
+        {
+            /* Groupe dissous */
+            printf("\n--- %s ---\n", rep.Texte);
+            printf("Le groupe a été dissous.\n");
+            fermer_socket_udp(*sock);
+            evenement = 1;
+            break;
+        }
+        /* Les autres types de messages (MSG, RSP, etc.) sont ignorés ici */
+    }
+    return evenement;
 }
 
 /* Lance AffichageISY sur le port du groupe */
@@ -225,56 +308,8 @@ static void action_dialoguer_groupe(void)
     printf("Tapez vos messages (ligne vide pour revenir au menu)...\n");
 
     char buffer[ISY_TAILLE_TEXTE];
-    /* Mettre le socket en non-bloquant pour pouvoir lire des messages système (BAN, MIG, FIN) */
-    {
-        int flags = fcntl(sockG, F_GETFL, 0);
-        if (flags != -1)
-            fcntl(sockG, F_SETFL, flags | O_NONBLOCK);
-    }
     while (1)
     {
-        /* Vérifier s'il y a des messages système à traiter avant de lire l'entrée utilisateur */
-        while (1)
-        {
-            MessageISY sysMsg;
-            struct sockaddr_in addrSys;
-            socklen_t lenSys = sizeof(addrSys);
-            ssize_t nSys = recvfrom(sockG, &sysMsg, sizeof(sysMsg), 0,
-                                   (struct sockaddr *)&addrSys, &lenSys);
-            if (nSys <= 0)
-                break; /* pas de message à lire */
-            sysMsg.Ordre[ISY_TAILLE_ORDRE - 1] = '\0';
-            sysMsg.Emetteur[ISY_TAILLE_NOM - 1] = '\0';
-            sysMsg.Texte[ISY_TAILLE_TEXTE - 1] = '\0';
-            if (strcmp(sysMsg.Ordre, "BAN") == 0)
-            {
-                printf("\n--- %s ---\n", sysMsg.Texte);
-                fermer_socket_udp(sockG);
-                action_quitter_groupe();
-                return;
-            }
-            else if (strcmp(sysMsg.Ordre, "FIN") == 0)
-            {
-                printf("\n--- %s ---\n", sysMsg.Texte);
-                fermer_socket_udp(sockG);
-                action_quitter_groupe();
-                return;
-            }
-            else if (strcmp(sysMsg.Ordre, "MIG") == 0)
-            {
-                int newPort = atoi(sysMsg.Texte);
-                printf("\n--- Migration vers le port %d ---\n", newPort);
-                arreter_affichage();
-                g_portGroupeActif = newPort;
-                lancer_affichage(g_portGroupeActif, g_nomUtilisateur);
-                /* Mettre à jour l'adresse du groupe pour l'envoi des prochains messages */
-                init_sockaddr(&addrG, ISY_IP_SERVEUR, g_portGroupeActif);
-                /* Continuer la boucle pour vider tous les messages système */
-                continue;
-            }
-            /* Sinon, on ignore le message (MSG, RSP, etc.) */
-        }
-
         printf("Message : ");
         if (fgets(buffer, sizeof(buffer), stdin) == NULL)
             break;
@@ -285,10 +320,32 @@ static void action_dialoguer_groupe(void)
         if (buffer[0] == '\0')
             break;
 
+        /* Avant toute chose, vérifier s'il existe des notifications système en attente
+         * (par exemple, migration vers un autre groupe, bannissement ou fin de groupe).
+         */
+        {
+            struct sockaddr_in tmpAddr = addrG;
+            if (verifier_messages_systeme(&sockG, &tmpAddr))
+            {
+                /* Un événement (ban ou fin) a été détecté : quitter la boucle de chat */
+                fermer_socket_udp(sockG);
+                action_quitter_groupe();
+                return;
+            }
+            /* Remettre à jour addrG si la migration a changé de port */
+            addrG = tmpAddr;
+        }
+
         /* Si l'utilisateur souhaite entrer en mode commande, tape "cmd" */
         if (strcmp(buffer, "cmd") == 0)
         {
-            /* Afficher l'aide rapide à l'entrée du mode commande */
+            /*
+             * Lorsque l'utilisateur passe en mode commande, nous affichons
+             * immédiatement un rappel lui indiquant de taper « help » pour
+             * obtenir la liste complète des commandes disponibles. Cela
+             * améliore l'ergonomie en guidant l'utilisateur sans qu'il
+             * ait besoin de deviner les commandes possibles.
+             */
             printf("Tapez 'help' pour avoir toutes la liste des cmd\n");
 
             /* Boucle de commande jusqu'à ce que l'utilisateur tape "msg" */
@@ -345,12 +402,13 @@ static void action_dialoguer_groupe(void)
                 {
                     perror("sendto CMD Client->Groupe");
                 }
-
-                /* Attendre une réponse (RSP, BAN, MIG, FIN) */
+                /* Attendre une réponse RSP (ignorer les MSG broadcasts) */
                 MessageISY rep;
                 struct sockaddr_in addrR;
                 socklen_t lenR = sizeof(addrR);
                 int received_response = 0;
+
+                /* Boucle pour ignorer les messages non-RSP */
                 while (!received_response)
                 {
                     ssize_t nrep = recvfrom(sockG, &rep, sizeof(rep), 0,
@@ -360,103 +418,84 @@ static void action_dialoguer_groupe(void)
                         perror("recvfrom CMD response");
                         break;
                     }
+
                     rep.Ordre[ISY_TAILLE_ORDRE - 1] = '\0';
                     rep.Emetteur[ISY_TAILLE_NOM - 1] = '\0';
                     rep.Texte[ISY_TAILLE_TEXTE - 1] = '\0';
 
+                    /* Ne traiter que les réponses RSP */
                     if (strcmp(rep.Ordre, "RSP") == 0)
                     {
                         printf("\n%s\n", rep.Texte);
                         received_response = 1;
                     }
-                    else if (strcmp(rep.Ordre, "BAN") == 0)
+                    else
                     {
-                        printf("\n--- %s ---\n", rep.Texte);
+                        /* Traiter d'éventuelles notifications système sur le même socket */
+                        MessageISY sysMsg = rep;
+                        if (strcmp(sysMsg.Ordre, "MIG") == 0 || strcmp(sysMsg.Ordre, "BAN") == 0 || strcmp(sysMsg.Ordre, "FIN") == 0)
+                        {
+                            /* Remettre le message dans le flux via traitement commun */
+                            /* On place sysMsg au début du buffer en simulant la réception par la fonction
+                             * verifier_messages_systeme. Pour simplifier, on réinjecte sysMsg via un buffer local. */
+                            /* Ici, on appelle directement verifier_messages_systeme qui videra les éventuels messages */
+                            struct sockaddr_in tmpAddr2 = addrG;
+                            if (verifier_messages_systeme(&sockG, &tmpAddr2))
+                            {
+                                /* Bannissement ou dissolution : sortir immédiatement */
+                                fermer_socket_udp(sockG);
+                                action_quitter_groupe();
+                                return;
+                            }
+                            addrG = tmpAddr2;
+                        }
+                    }
+                }
+
+                /* Après avoir reçu une réponse à la commande, on traite les notifications système éventuelles */
+                {
+                    struct sockaddr_in tmpAddr3 = addrG;
+                    if (verifier_messages_systeme(&sockG, &tmpAddr3))
+                    {
                         fermer_socket_udp(sockG);
                         action_quitter_groupe();
                         return;
                     }
-                    else if (strcmp(rep.Ordre, "FIN") == 0)
-                    {
-                        printf("\n--- %s ---\n", rep.Texte);
-                        fermer_socket_udp(sockG);
-                        action_quitter_groupe();
-                        return;
-                    }
-                    else if (strcmp(rep.Ordre, "MIG") == 0)
-                    {
-                        int newPort = atoi(rep.Texte);
-                        printf("\n--- Migration vers le port %d ---\n", newPort);
-                        arreter_affichage();
-                        g_portGroupeActif = newPort;
-                        lancer_affichage(g_portGroupeActif, g_nomUtilisateur);
-                        init_sockaddr(&addrG, ISY_IP_SERVEUR, g_portGroupeActif);
-                        received_response = 1;
-                    }
-                    /* Sinon, ignorer les autres messages (MSG, etc.) */
+                    addrG = tmpAddr3;
                 }
             }
             continue;
         }
 
-        /* Construction et envoi du message chat normal */
         MessageISY msg;
         memset(&msg, 0, sizeof(msg));
         strncpy(msg.Ordre, "MSG", ISY_TAILLE_ORDRE - 1);
         strncpy(msg.Emetteur, g_nomUtilisateur, ISY_TAILLE_NOM - 1);
         strncpy(msg.Texte, buffer, ISY_TAILLE_TEXTE - 1);
         msg.Texte[ISY_TAILLE_TEXTE - 1] = '\0';
+
         /* Chiffrement avant envoi */
         cesar_chiffrer(msg.Texte);
+
         if (sendto(sockG, &msg, sizeof(msg), 0,
                    (struct sockaddr *)&addrG, sizeof(addrG)) < 0)
         {
             perror("sendto Client->Groupe");
         }
 
-        /* Après l'envoi, traiter éventuellement des messages système en attente */
-        while (1)
+        /* Après chaque message envoyé, vérifier les ordres système (MIG, BAN, FIN) */
         {
-            MessageISY resp;
-            struct sockaddr_in addrR2;
-            socklen_t lenR2 = sizeof(addrR2);
-            ssize_t nresp = recvfrom(sockG, &resp, sizeof(resp), 0,
-                                     (struct sockaddr *)&addrR2, &lenR2);
-            if (nresp <= 0)
-                break;
-            resp.Ordre[ISY_TAILLE_ORDRE - 1] = '\0';
-            resp.Emetteur[ISY_TAILLE_NOM - 1] = '\0';
-            resp.Texte[ISY_TAILLE_TEXTE - 1] = '\0';
-            if (strcmp(resp.Ordre, "BAN") == 0)
+            struct sockaddr_in tmpAddr4 = addrG;
+            if (verifier_messages_systeme(&sockG, &tmpAddr4))
             {
-                printf("\n--- %s ---\n", resp.Texte);
-                fermer_socket_udp(sockG);
+                /* Bannissement ou dissolution : quitter la boucle */
                 action_quitter_groupe();
                 return;
             }
-            else if (strcmp(resp.Ordre, "FIN") == 0)
-            {
-                printf("\n--- %s ---\n", resp.Texte);
-                fermer_socket_udp(sockG);
-                action_quitter_groupe();
-                return;
-            }
-            else if (strcmp(resp.Ordre, "MIG") == 0)
-            {
-                int newPort2 = atoi(resp.Texte);
-                printf("\n--- Migration vers le port %d ---\n", newPort2);
-                arreter_affichage();
-                g_portGroupeActif = newPort2;
-                lancer_affichage(g_portGroupeActif, g_nomUtilisateur);
-                init_sockaddr(&addrG, ISY_IP_SERVEUR, g_portGroupeActif);
-                /* Continuer pour vider tous les messages système */
-                continue;
-            }
-            /* Ignorer les autres messages */
+            addrG = tmpAddr4;
         }
     }
 
-    /* En sortant de la boucle, on ferme le socket du groupe */
     fermer_socket_udp(sockG);
 }
 
