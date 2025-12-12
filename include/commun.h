@@ -131,23 +131,27 @@ static inline int valider_ordre(const char *ordre)
     const char *ordres_valides[] = {
         "LST", "CRG", "JNG", "ACK", "ERR", "MSG", "CMD", "REG",
         "FIN", "BAN", "RSP", "CON", "DEC", "DEL", "FUS", "REP",
-        NULL
-    };
+        NULL};
 
-    if (!ordre || ordre[0] == '\0') {
+    if (!ordre || ordre[0] == '\0')
+    {
         return 0;
     }
 
     /* Vérifier que le champ contient uniquement des lettres majuscules */
-    for (int i = 0; ordre[i] != '\0' && i < ISY_TAILLE_ORDRE - 1; ++i) {
-        if (ordre[i] < 'A' || ordre[i] > 'Z') {
+    for (int i = 0; ordre[i] != '\0' && i < ISY_TAILLE_ORDRE - 1; ++i)
+    {
+        if (ordre[i] < 'A' || ordre[i] > 'Z')
+        {
             return 0;
         }
     }
 
     /* Vérifier que l'ordre est dans la liste */
-    for (int i = 0; ordres_valides[i] != NULL; ++i) {
-        if (strcmp(ordre, ordres_valides[i]) == 0) {
+    for (int i = 0; ordres_valides[i] != NULL; ++i)
+    {
+        if (strcmp(ordre, ordres_valides[i]) == 0)
+        {
             return 1;
         }
     }
@@ -155,28 +159,57 @@ static inline int valider_ordre(const char *ordre)
     return 0; /* Ordre inconnu */
 }
 
+/* Validation d'un ordre REQUETE (côté ServeurISY) */
+static inline int valider_ordre_requete_serveur(const char *ordre)
+{
+    const char *req_valides[] = {
+        "CON", "DEC", "CRG", "LST", "JNG", "DEL", "FUS",
+        NULL};
+
+    if (!ordre || ordre[0] == '\0')
+        return 0;
+
+    /* Majuscules uniquement (même logique que valider_ordre) */
+    for (int i = 0; ordre[i] != '\0' && i < ISY_TAILLE_ORDRE - 1; ++i)
+    {
+        if (ordre[i] < 'A' || ordre[i] > 'Z')
+            return 0;
+    }
+
+    for (int i = 0; req_valides[i] != NULL; ++i)
+    {
+        if (strcmp(ordre, req_valides[i]) == 0)
+            return 1;
+    }
+    return 0;
+}
+
 /* Validation d'un nom (utilisateur ou groupe) */
 static inline int valider_nom(const char *nom)
 {
-    if (!nom || nom[0] == '\0') {
+    if (!nom || nom[0] == '\0')
+    {
         return 0; /* Nom vide */
     }
 
     /* Vérifier que le nom contient uniquement des caractères autorisés */
-    for (int i = 0; nom[i] != '\0'; ++i) {
+    for (int i = 0; nom[i] != '\0'; ++i)
+    {
         char c = nom[i];
         /* Autoriser : lettres, chiffres, underscore, tiret, point */
         if (!((c >= 'a' && c <= 'z') ||
               (c >= 'A' && c <= 'Z') ||
               (c >= '0' && c <= '9') ||
-              c == '_' || c == '-' || c == '.')) {
+              c == '_' || c == '-' || c == '.'))
+        {
             return 0; /* Caractère invalide */
         }
     }
 
     /* Vérifier la longueur */
     size_t len = strlen(nom);
-    if (len >= ISY_TAILLE_NOM) {
+    if (len >= ISY_TAILLE_NOM)
+    {
         return 0; /* Trop long */
     }
 
