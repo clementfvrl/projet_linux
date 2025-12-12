@@ -191,6 +191,63 @@ static void action_rejoindre_groupe(void)
         int port = -1;
         if (sscanf(rep.Texte, "OK %d", &port) == 1 && port > 0 && port <= 65535)
         {
+            /* Avant de rejoindre définitivement, testons si l'utilisateur est banni sur ce groupe.
+             * On envoie une commande 'CMD list' au processus de groupe et on attend une
+             * réponse. Si un message BAN est reçu, le client est considéré comme banni et
+             * la tentative de rejoindre est annulée. */
+            int banni = 0;
+            int sockTest = creer_socket_udp();
+            if (sockTest >= 0)
+            {
+                /* Adresse du groupe */
+                struct sockaddr_in addrG;
+                init_sockaddr(&addrG, ISY_IP_SERVEUR, port);
+
+                /* Construire une commande list minimaliste */
+                MessageISY testMsg;
+                memset(&testMsg, 0, sizeof(testMsg));
+                strncpy(testMsg.Ordre, "CMD", ISY_TAILLE_ORDRE - 1);
+                strncpy(testMsg.Emetteur, g_nomUtilisateur, ISY_TAILLE_NOM - 1);
+                strncpy(testMsg.Texte, "list", ISY_TAILLE_TEXTE - 1);
+
+                /* Envoyer la commande */
+                sendto(sockTest, &testMsg, sizeof(testMsg), 0,
+                       (struct sockaddr *)&addrG, sizeof(addrG));
+
+                /* Attendre une réponse RSP ou BAN (timeout ~300ms) */
+                struct timeval tv;
+                tv.tv_sec = 0;
+                tv.tv_usec = 300000; /* 300 ms */
+                fd_set rfds;
+                FD_ZERO(&rfds);
+                FD_SET(sockTest, &rfds);
+                int sel = select(sockTest + 1, &rfds, NULL, NULL, &tv);
+                if (sel > 0 && FD_ISSET(sockTest, &rfds))
+                {
+                    MessageISY resp;
+                    struct sockaddr_in addrResp;
+                    socklen_t lenResp = sizeof(addrResp);
+                    ssize_t n = recvfrom(sockTest, &resp, sizeof(resp), 0,
+                                        (struct sockaddr *)&addrResp, &lenResp);
+                    if (n > 0)
+                    {
+                        resp.Ordre[ISY_TAILLE_ORDRE - 1] = '\0';
+                        resp.Texte[ISY_TAILLE_TEXTE - 1] = '\0';
+                        /* Un message BAN indique que l'utilisateur est banni */
+                        if (strcmp(resp.Ordre, "BAN") == 0)
+                        {
+                            banni = 1;
+                        }
+                    }
+                }
+                fermer_socket_udp(sockTest);
+            }
+
+            if (banni)
+            {
+                printf("Vous êtes banni de ce groupe. Rejoindre est impossible.\n");
+                return;
+            }
 
             /* 1. Fermer l'ancienne fenêtre si elle existe */
             arreter_affichage();

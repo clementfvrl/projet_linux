@@ -79,11 +79,22 @@ static void init_membres(void)
     }
 }
 
+/*
+ * Retourne l'indice d'un slot libre pour un nouveau membre.
+ * On ne réutilise pas les entrées marquées comme bannies afin de conserver
+ * une liste noire persistante. Une entrée est considérée libre seulement
+ * si elle est inactive et non bannie. Si aucune entrée valable n'est trouvée,
+ * renvoie -1.
+ */
 static int trouver_slot_membre(void)
 {
     for (int i = 0; i < ISY_MAX_MEMBRES; ++i)
     {
-        if (!g_membres[i].actif) return i;
+        /* Un slot est disponible si inactif et non bannie */
+        if (!g_membres[i].actif && !g_membres[i].banni)
+        {
+            return i;
+        }
     }
     return -1;
 }
@@ -553,11 +564,18 @@ int main(int argc, char *argv[])
                  * suffixe _Vue du paramètre, puis on parcourt les membres
                  * actifs pour comparer les noms de base en ignorant la casse.
                  */
+                /*
+                 * La commande ban/delete prend un nom en argument. On extrait ce nom, on
+                 * retire éventuellement le suffixe _Vue et on bannit toutes les
+                 * occurrences correspondantes (client et affichage). Le
+                 * gestionnaire ne peut pas être exclu. On ne s'arrête pas au
+                 * premier trouvé afin de notifier toutes les adresses du membre.
+                 */
                 char *nameStart = strchr(cmd, ' ');
                 if (nameStart)
                 {
                     nameStart++;
-                    /* Extraire le nom cible sans le suffixe _Vue */
+                    /* Récupérer le nom de base sans suffixe _Vue */
                     char cibleBase[ISY_TAILLE_NOM];
                     strncpy(cibleBase, nameStart, ISY_TAILLE_NOM - 1);
                     cibleBase[ISY_TAILLE_NOM - 1] = '\0';
@@ -567,9 +585,10 @@ int main(int argc, char *argv[])
                     int found = 0;
                     for (int i = 0; i < ISY_MAX_MEMBRES; ++i)
                     {
-                        if (g_membres[i].actif && !g_membres[i].banni)
+                        /* Ignorer déjà bannis pour éviter de renvoyer plusieurs fois BAN */
+                        if (!g_membres[i].banni)
                         {
-                            /* Comparer le nom de base du membre courant */
+                            /* Comparer le nom de base (sans _Vue) de l'entrée courante */
                             char membreBase[ISY_TAILLE_NOM];
                             strncpy(membreBase, g_membres[i].nom, ISY_TAILLE_NOM - 1);
                             membreBase[ISY_TAILLE_NOM - 1] = '\0';
@@ -577,34 +596,44 @@ int main(int argc, char *argv[])
                             if (suf2) *suf2 = '\0';
                             if (strcasecmp(membreBase, cibleBase) == 0)
                             {
-                                /* Ne pas exclure le gestionnaire lui-même */
-                                if (strcasecmp(membreBase, g_moderateurName) == 0) {
+                                /* Ne pas bannir le gestionnaire */
+                                if (strcasecmp(membreBase, g_moderateurName) == 0)
+                                {
+                                    /* Message d'erreur si on essaie de bannir le modérateur */
                                     snprintf(rep.Texte, ISY_TAILLE_TEXTE, "Impossible d'exclure le gestionnaire !");
-                                    found = 1;
-                                    break;
+                                    /* Ne pas marquer comme trouvé ici pour continuer à traiter les autres occurrences */
+                                    continue;
                                 }
-                                /* Marquer comme banni et désactiver le membre */
+                                /* Bannir l'entrée */
                                 g_membres[i].banni = 1;
                                 g_membres[i].actif = 0;
-                                /* Remplacer son nom par le nom de base pour une détection future */
+                                /* Remplacer son nom par la base pour une détection future */
                                 strncpy(g_membres[i].nom, membreBase, ISY_TAILLE_NOM - 1);
                                 g_membres[i].nom[ISY_TAILLE_NOM - 1] = '\0';
-                                /* Notifier immédiatement le membre banni */
-                                MessageISY banMsg;
-                                memset(&banMsg, 0, sizeof(banMsg));
-                                strncpy(banMsg.Ordre, "BAN", ISY_TAILLE_ORDRE - 1);
-                                strncpy(banMsg.Emetteur, "SYSTEM", ISY_TAILLE_NOM - 1);
-                                snprintf(banMsg.Texte, ISY_TAILLE_TEXTE, "Vous avez été banni du groupe");
-                                sendto(sock_groupe, &banMsg, sizeof(banMsg), 0,
-                                       (struct sockaddr *)&g_membres[i].addr, sizeof(g_membres[i].addr));
+                                /* Notifier le membre (client ou affichage) si une adresse existe */
+                                if (g_membres[i].addr.sin_port != 0)
+                                {
+                                    MessageISY banMsg;
+                                    memset(&banMsg, 0, sizeof(banMsg));
+                                    strncpy(banMsg.Ordre, "BAN", ISY_TAILLE_ORDRE - 1);
+                                    strncpy(banMsg.Emetteur, "SYSTEM", ISY_TAILLE_NOM - 1);
+                                    snprintf(banMsg.Texte, ISY_TAILLE_TEXTE, "Vous avez été banni du groupe");
+                                    sendto(sock_groupe, &banMsg, sizeof(banMsg), 0,
+                                           (struct sockaddr *)&g_membres[i].addr, sizeof(g_membres[i].addr));
+                                }
                                 found = 1;
                             }
                         }
                     }
                     if (found && rep.Texte[0] == '\0')
+                    {
+                        /* Confirmation pour le gestionnaire */
                         snprintf(rep.Texte, ISY_TAILLE_TEXTE, "Banni: %s", cibleBase);
+                    }
                     else if (!found)
+                    {
                         snprintf(rep.Texte, ISY_TAILLE_TEXTE, "Inconnu: %s", cibleBase);
+                    }
                 }
                 }
             }
