@@ -389,6 +389,17 @@ int main(int argc, char *argv[])
                        (struct sockaddr *)&addrCli, sizeof(addrCli));
             }
         }
+        else if (strcmp(msg.Ordre, "REP") == 0)
+        {
+            /*
+             * Message de redirection suite à une fusion (envoyé par le serveur).
+             * On diffuse ce message à tous les membres actifs du groupe afin qu'ils
+             * puissent réagir côté client. L'émetteur (serveur) n'est pas dans
+             * g_membres, donc il ne sera pas exclu par redistribuer_message.
+             */
+            printf("GroupeISY(port %d) : message de fusion reçu, diffusion de la redirection\n", g_portGroupe);
+            redistribuer_message(&msg, &addrCli);
+        }
         else if (strcmp(msg.Ordre, "CMD") == 0)
         {
             /* === AJOUT POUR SECURISER LA CONNEXION === */
