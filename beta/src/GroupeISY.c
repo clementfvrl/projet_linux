@@ -36,31 +36,6 @@ typedef struct
 
 static MembreGroupe g_membres[ISY_MAX_MEMBRES];
 
-/*
- * Fonction utilitaire : détermine si un nom (sans suffixe _Vue) est
- * actuellement sur liste noire. Ce test est réalisé en ignorant la
- * casse, afin qu'un utilisateur banni ne puisse pas revenir sous un
- * alias similaire. Si un nom est banni, la fonction renvoie 1,
- * sinon 0.
- */
-static int est_banni_par_nom(const char *nom)
-{
-    if (!nom || nom[0] == '\0') {
-        return 0;
-    }
-    char base[ISY_TAILLE_NOM];
-    strncpy(base, nom, ISY_TAILLE_NOM - 1);
-    base[ISY_TAILLE_NOM - 1] = '\0';
-    char *suf = strstr(base, "_Vue");
-    if (suf) *suf = '\0';
-    for (int i = 0; i < ISY_MAX_MEMBRES; ++i) {
-        if (g_membres[i].banni && strcasecmp(g_membres[i].nom, base) == 0) {
-            return 1;
-        }
-    }
-    return 0;
-}
-
 static void init_membres(void)
 {
     for (int i = 0; i < ISY_MAX_MEMBRES; ++i)
@@ -277,23 +252,16 @@ int main(int argc, char *argv[])
         }
         else if (strcmp(msg.Ordre, "MSG") == 0)
         {
-            /*
-             * Réception d'un message chiffré de la part d'un membre. On enregistre
-             * l'adresse de l'émetteur s'il n'était pas encore connu. Les membres
-             * bannis sont filtrés par nom et ne verront pas leurs messages
-             * redistribués.
-             */
             ajouter_membre(&addrCli, msg.Emetteur);
-
+            
+            /* Mise à jour stats + anti-ban */
             int idx = trouver_index_membre(&addrCli);
             int banned = 0;
             if (idx >= 0)
             {
-                /* Déterminer si ce membre est banni par adresse */
                 banned = g_membres[idx].banni;
                 if (!banned)
                 {
-                    /* Mise à jour des statistiques pour les membres actifs */
                     time_t now = time(NULL);
                     if (g_membres[idx].nb_messages > 0)
                     {
@@ -304,54 +272,23 @@ int main(int argc, char *argv[])
                     g_membres[idx].nb_messages++;
                 }
             }
-            else
-            {
-                /* Adresse inconnue : vérifier si le nom est sur liste noire */
-                if (est_banni_par_nom(msg.Emetteur)) {
-                    banned = 1;
-                }
-            }
 
             if (!banned)
             {
-                /* Afficher le message chiffré pour démonstration et le relayer */
-                printf("GroupeISY : MSG de %s (chiffré: %s)\n", msg.Emetteur, msg.Texte);
+                printf("GroupeISY : MSG de %s\n", msg.Emetteur);
                 redistribuer_message(&msg, &addrCli);
             }
             else
             {
-                /*
-                 * Un membre banni envoie un message : on l'ignore simplement.
-                 * La notification de bannissement a déjà été envoyée lors de
-                 * l'exécution de la commande de ban.
-                 */
+                /* Si l'émetteur est banni, on lui renvoie un BAN pour fermer son interface */
+                MessageISY banMsg;
+                memset(&banMsg, 0, sizeof(banMsg));
+                strncpy(banMsg.Ordre, "BAN", ISY_TAILLE_ORDRE - 1);
+                strncpy(banMsg.Emetteur, "SYSTEM", ISY_TAILLE_NOM - 1);
+                snprintf(banMsg.Texte, ISY_TAILLE_TEXTE, "Vous êtes banni de ce groupe");
+                sendto(sock_groupe, &banMsg, sizeof(banMsg), 0,
+                       (struct sockaddr *)&addrCli, sizeof(addrCli));
             }
-        }
-        /*
-         * Ordre MIG : reçu du serveur lors d'une fusion. Le texte
-         * contient le nouveau port auquel les membres doivent se
-         * connecter. On relaye ce message à tous les membres actifs
-         * (affichages et sockets de chat) afin qu'ils puissent
-         * automatiquement se réinscrire sur le nouveau groupe.
-         */
-        else if (strcmp(msg.Ordre, "MIG") == 0)
-        {
-            MessageISY mig;
-            memset(&mig, 0, sizeof(mig));
-            strncpy(mig.Ordre, "MIG", ISY_TAILLE_ORDRE - 1);
-            strncpy(mig.Emetteur, "SYSTEM", ISY_TAILLE_NOM - 1);
-            strncpy(mig.Texte, msg.Texte, ISY_TAILLE_TEXTE - 1);
-            /* Envoi à tous les membres non bannis */
-            for (int i = 0; i < ISY_MAX_MEMBRES; ++i)
-            {
-                if (g_membres[i].actif && !g_membres[i].banni)
-                {
-                    sendto(sock_groupe, &mig, sizeof(mig), 0,
-                           (struct sockaddr *)&g_membres[i].addr,
-                           sizeof(g_membres[i].addr));
-                }
-            }
-            /* Pas de réponse au serveur nécessaire. */
         }
         else if (strcmp(msg.Ordre, "CMD") == 0)
         {
@@ -498,39 +435,60 @@ int main(int argc, char *argv[])
             else if (strncasecmp(cmd, "delete ", 7) == 0 || strncasecmp(cmd, "ban ", 4) == 0)
             {
                 if (strcasecmp(msg.Emetteur, g_moderateurName) != 0) {
+                    /* Seul le modérateur peut bannir */
                     strncpy(rep.Texte, "Erreur: Seul le gestionnaire peut exclure.", ISY_TAILLE_TEXTE - 1);
-                }
-                else {
+                } else {
                     char *nameStart = strchr(cmd, ' ');
                     if (nameStart)
                     {
+                        /* Avancer au nom après l'espace */
                         nameStart++;
+                        /* Supprimer les espaces de fin éventuels */
+                        while (*nameStart == ' ') nameStart++;
                         int found = 0;
                         for (int i = 0; i < ISY_MAX_MEMBRES; ++i)
                         {
-                            if (g_membres[i].actif && !g_membres[i].banni &&
-                                strncasecmp(g_membres[i].nom, nameStart, strlen(nameStart)) == 0)
+                            if (g_membres[i].actif && !g_membres[i].banni)
                             {
-                                if (strcasecmp(g_membres[i].nom, g_moderateurName) == 0) {
-                                    snprintf(rep.Texte, ISY_TAILLE_TEXTE, "Impossible d'exclure le gestionnaire !");
-                                    found = 1; break;
+                                /* Comparer le nom sans le suffixe _Vue */
+                                char baseName[ISY_TAILLE_NOM];
+                                strncpy(baseName, g_membres[i].nom, ISY_TAILLE_NOM - 1);
+                                baseName[ISY_TAILLE_NOM - 1] = '\0';
+                                char *suf = strstr(baseName, "_Vue");
+                                if (suf) *suf = '\0';
+                                /* Ignore la casse et compare exactement */
+                                if (strcasecmp(baseName, nameStart) == 0)
+                                {
+                                    /* Ne pas bannir le modérateur */
+                                    if (strcasecmp(baseName, g_moderateurName) == 0) {
+                                        snprintf(rep.Texte, ISY_TAILLE_TEXTE, "Impossible d'exclure le gestionnaire !");
+                                        found = 1;
+                                        break;
+                                    }
+                                    /* Marquer comme banni et désactiver */
+                                    g_membres[i].banni = 1;
+                                    g_membres[i].actif = 0;
+                                    /* Mémoriser uniquement le nom de base pour la liste noire */
+                                    strncpy(g_membres[i].nom, baseName, ISY_TAILLE_NOM - 1);
+                                    g_membres[i].nom[ISY_TAILLE_NOM - 1] = '\0';
+                                    /* Notifier le membre banni */
+                                    MessageISY banMsg;
+                                    memset(&banMsg, 0, sizeof(banMsg));
+                                    strncpy(banMsg.Ordre, "BAN", ISY_TAILLE_ORDRE - 1);
+                                    strncpy(banMsg.Emetteur, "SYSTEM", ISY_TAILLE_NOM - 1);
+                                    snprintf(banMsg.Texte, ISY_TAILLE_TEXTE, "Vous avez été banni du groupe");
+                                    sendto(sock_groupe, &banMsg, sizeof(banMsg), 0,
+                                           (struct sockaddr *)&g_membres[i].addr, sizeof(g_membres[i].addr));
+                                    found = 1;
                                 }
-                                /* Marquer comme banni et désactiver */
-                                g_membres[i].banni = 1;
-                                g_membres[i].actif = 0;
-                                /* Notifier le membre banni */
-                                MessageISY banMsg;
-                                memset(&banMsg, 0, sizeof(banMsg));
-                                strncpy(banMsg.Ordre, "BAN", ISY_TAILLE_ORDRE - 1);
-                                strncpy(banMsg.Emetteur, "SYSTEM", ISY_TAILLE_NOM - 1);
-                                snprintf(banMsg.Texte, ISY_TAILLE_TEXTE, "Vous avez été banni du groupe");
-                                sendto(sock_groupe, &banMsg, sizeof(banMsg), 0,
-                                       (struct sockaddr *)&g_membres[i].addr, sizeof(g_membres[i].addr));
-                                found = 1;
                             }
                         }
-                        if(found && rep.Texte[0] == '\0') snprintf(rep.Texte, ISY_TAILLE_TEXTE, "Banni: %s", nameStart);
-                        else if (!found) snprintf(rep.Texte, ISY_TAILLE_TEXTE, "Inconnu: %s", nameStart);
+                        if(found && rep.Texte[0] == '\0') {
+                            snprintf(rep.Texte, ISY_TAILLE_TEXTE, "Banni: %s", nameStart);
+                        }
+                        else if (!found) {
+                            snprintf(rep.Texte, ISY_TAILLE_TEXTE, "Inconnu: %s", nameStart);
+                        }
                     }
                 }
             }
@@ -543,6 +501,32 @@ int main(int argc, char *argv[])
             /* Envoi de la réponse uniquement à celui qui a fait la demande (Pas d'écho aux autres) */
             sendto(sock_groupe, &rep, sizeof(rep), 0,
                     (struct sockaddr *)&addrCli, sizeof(addrCli));
+        }
+        else if (strcmp(msg.Ordre, "MIG") == 0)
+        {
+            /* Migration : le serveur demande de migrer ce groupe vers un autre port (msg.Texte = nouveau port) */
+            /* On retransmet ce message MIG à tous les membres actifs pour qu'ils se réinscrivent au nouveau groupe. */
+            MessageISY migMsg;
+            memset(&migMsg, 0, sizeof(migMsg));
+            strncpy(migMsg.Ordre, "MIG", ISY_TAILLE_ORDRE - 1);
+            strncpy(migMsg.Emetteur, "SYSTEM", ISY_TAILLE_NOM - 1);
+            /* Copier le port en clair dans le champ texte */
+            strncpy(migMsg.Texte, msg.Texte, ISY_TAILLE_TEXTE - 1);
+            migMsg.Texte[ISY_TAILLE_TEXTE - 1] = '\0';
+            for (int i = 0; i < ISY_MAX_MEMBRES; ++i)
+            {
+                if (g_membres[i].actif)
+                {
+                    sendto(sock_groupe, &migMsg, sizeof(migMsg), 0,
+                           (struct sockaddr *)&g_membres[i].addr,
+                           sizeof(g_membres[i].addr));
+                }
+            }
+            /* Laisser un court temps pour que les messages partent */
+            sleep(1);
+            /* Fermer proprement le processus groupe */
+            fermer_socket_udp(sock_groupe);
+            exit(0);
         }
     }
     fermer_socket_udp(sock_groupe);

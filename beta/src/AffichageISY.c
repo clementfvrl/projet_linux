@@ -4,6 +4,7 @@
  *********************************************/
 
 #include "commun.h"
+#include <stdlib.h>
 
 /* ... includes ... */
 
@@ -92,6 +93,28 @@ int main(int argc, char *argv[])
             printf("--- %s ---\n", msg.Texte);
             printf("Vous avez été exclu du groupe. Fermeture automatique...\n");
             break;
+        }
+        else if (strcmp(msg.Ordre, "MIG") == 0)
+        {
+            /* Migration : le serveur/groupe nous informe d'un nouveau port */
+            int newPort = atoi(msg.Texte);
+            printf("--- Migration automatique vers le port %d ---\n", newPort);
+            /* Mettre à jour le port et l'adresse du groupe */
+            portGroupe = newPort;
+            init_sockaddr(&addrGroupe, ISY_IP_SERVEUR, portGroupe);
+            /* Envoyer un nouveau REG pour s'inscrire dans le nouveau groupe */
+            MessageISY reg2;
+            memset(&reg2, 0, sizeof(reg2));
+            strncpy(reg2.Ordre, "REG", ISY_TAILLE_ORDRE - 1);
+            strncpy(reg2.Emetteur, monNom, ISY_TAILLE_NOM - 1);
+            if (sendto(sock, &reg2, sizeof(reg2), 0,
+                       (struct sockaddr *)&addrGroupe, sizeof(addrGroupe)) < 0)
+            {
+                perror("sendto REG (migration)");
+                break;
+            }
+            printf("Reinscription reussie, attente des messages...\n");
+            continue;
         }
     }
 

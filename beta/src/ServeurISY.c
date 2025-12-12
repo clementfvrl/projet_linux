@@ -316,9 +316,38 @@ int main(void)
                         snprintf(msgRep.Texte, ISY_TAILLE_TEXTE,
                                  "Fusion refusée : vous devez être modérateur des deux groupes");
                     } else {
-                        /* Fusion de g2 dans g1 */
+                    /* Fusion de g2 dans g1 : envoyer d'abord un ordre MIG au groupe2 */
+                        {
+                            MessageISY mig;
+                            memset(&mig, 0, sizeof(mig));
+                            strncpy(mig.Ordre, "MIG", ISY_TAILLE_ORDRE - 1);
+                            strncpy(mig.Emetteur, "SYSTEM", ISY_TAILLE_NOM - 1);
+                            /* Texte : nouveau port (celui de g1) */
+                            snprintf(mig.Texte, ISY_TAILLE_TEXTE, "%d", g_groupes[idx1].port);
+                            struct sockaddr_in addrG2;
+                            init_sockaddr(&addrG2, ISY_IP_SERVEUR, g_groupes[idx2].port);
+                            /* Envoi du MIG au processus GroupeISY 2 (qui redistribuera à ses membres) */
+                            sendto(sock_serveur, &mig, sizeof(mig), 0, (struct sockaddr *)&addrG2, sizeof(addrG2));
+                        }
+
+                        /* Optionnel : informer les membres du groupe1 de la fusion par un message système */
+                        {
+                            MessageISY notif;
+                            memset(&notif, 0, sizeof(notif));
+                            strncpy(notif.Ordre, "MSG", ISY_TAILLE_ORDRE - 1);
+                            strncpy(notif.Emetteur, "SYSTEM", ISY_TAILLE_NOM - 1);
+                            snprintf(notif.Texte, ISY_TAILLE_TEXTE, "Les groupes '%s' et '%s' ont été fusionnés", g1, g2);
+                            struct sockaddr_in addrG1;
+                            init_sockaddr(&addrG1, ISY_IP_SERVEUR, g_groupes[idx1].port);
+                            sendto(sock_serveur, &notif, sizeof(notif), 0,
+                                   (struct sockaddr *)&addrG1, sizeof(addrG1));
+                        }
+
+                        /* Après avoir envoyé MIG et notif, on peut terminer le groupe2 côté serveur */
                         if (g_groupes[idx2].pid > 0) {
+                            /* On envoie un signal de terminaison douce */
                             kill(g_groupes[idx2].pid, SIGINT);
+                            /* Attendre la fin du processus pour éviter un zombie */
                             waitpid(g_groupes[idx2].pid, NULL, 0);
                         }
                         g_groupes[idx2].actif = 0;
@@ -327,25 +356,9 @@ int main(void)
                         g_groupes[idx2].moderateurName[0] = '\0';
                         g_groupes[idx2].pid = 0;
 
-                        /* Notifie les membres du groupe restant qu'une fusion a eu lieu */
-                        MessageISY notif;
-                        memset(&notif, 0, sizeof(notif));
-                        strncpy(notif.Ordre, "MSG", ISY_TAILLE_ORDRE - 1);
-                        strncpy(notif.Emetteur, "SYSTEM", ISY_TAILLE_NOM - 1);
-                        snprintf(notif.Texte, ISY_TAILLE_TEXTE, "Les groupes '%s' et '%s' ont été fusionnés", g1, g2);
-                        /*
-                         * Les messages système doivent être chiffrés avant diffusion car
-                         * les clients appliquent un déchiffrement sur les ordres MSG.
-                         */
-                        cesar_chiffrer(notif.Texte);
-                        struct sockaddr_in addrG1;
-                        init_sockaddr(&addrG1, ISY_IP_SERVEUR, g_groupes[idx1].port);
-                        /* Envoi du message au processus GroupeISY pour diffusion */
-                        sendto(sock_serveur, &notif, sizeof(notif), 0, (struct sockaddr *)&addrG1, sizeof(addrG1));
-
                         snprintf(msgRep.Ordre, ISY_TAILLE_ORDRE, "ACK");
                         snprintf(msgRep.Texte, ISY_TAILLE_TEXTE,
-                                 "Groupes '%s' et '%s' fusionnes (membres de %s doivent se reconnecter)", g1, g2, g1);
+                                 "Groupes '%s' et '%s' fusionnes (les membres migrent automatiquement)", g1, g2);
                     }
                 }
             }
