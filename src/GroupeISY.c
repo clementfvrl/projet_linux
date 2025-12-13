@@ -129,6 +129,17 @@ static int trouver_index_membre(const struct sockaddr_in *addr)
 
 static void ajouter_membre(const struct sockaddr_in *addr, const char *nom)
 {
+
+    /* Ne pas ajouter d'entrée pour l'utilisateur SYSTEM. Les notifications
+     * système (messages envoyés par le serveur) utilisent l'émetteur
+     * "SYSTEM". Dans ces cas, il ne faut pas considérer SYSTEM comme un
+     * membre du groupe. Cela évite d'ajouter des entrées parasites
+     * lorsque des messages système sont diffusés (par exemple lors
+     * d'une fusion ou d'une notification). */
+    if (nom && strcmp(nom, "SYSTEM") == 0) {
+        return;
+    }
+
     if (adresse_deja_connue(addr)) return;
 
     /* Avant toute opération, on vérifie si le nom est banni (fiche 2.0) */
@@ -294,8 +305,18 @@ int main(int argc, char *argv[])
         msg.Emetteur[ISY_TAILLE_NOM - 1] = '\0';
         msg.Texte[ISY_TAILLE_TEXTE - 1] = '\0';
 
-        /* Validation du champ Ordre */
+        /* Validation du champ Ordre
+         * L'ordre 'REP' (réponse de fusion envoyée par le serveur) n'est pas
+         * reconnu par valider_ordre(). On le traite ici afin de propager
+         * l'information aux membres. Les autres ordres invalides sont ignorés.
+         */
         if (!valider_ordre(msg.Ordre)) {
+            if (strcmp(msg.Ordre, "REP") == 0) {
+                /* Diffusion du message de redirection à tous les membres actifs. */
+                printf("GroupeISY(port %d) : message de fusion reçu, diffusion de la redirection\n", g_portGroupe);
+                redistribuer_message(&msg, &addrCli);
+                continue;
+            }
             fprintf(stderr, "GroupeISY: Ordre invalide recu: '%s', ignore\n", msg.Ordre);
             continue;
         }
@@ -467,21 +488,56 @@ int main(int argc, char *argv[])
             else if (strncasecmp(cmd, "list", 4) == 0)
             {
                 size_t current_len = 0;
+                /*
+                 * Génère la liste des membres en consolidant les entrées
+                 * client et affichage (suffixe _Vue) sous le même nom de base.
+                 * On ignore les membres bannis et on ne liste chaque nom qu'une seule
+                 * fois. Cela permet de faire apparaître immédiatement les
+                 * membres provenant d'un groupe fusionné, même si seul leur
+                 * affichage est connecté (nom avec suffixe _Vue). Les noms
+                 * système ne sont jamais listés comme membres.
+                 */
+                char addedBases[ISY_MAX_MEMBRES][ISY_TAILLE_NOM];
+                int addedCount = 0;
                 for (int i = 0; i < ISY_MAX_MEMBRES; ++i)
                 {
                     if (g_membres[i].actif && !g_membres[i].banni)
                     {
-                        if (strstr(g_membres[i].nom, "_Vue") != NULL) continue;
+                        /* Exclure l'entrée si le nom est SYSTEM (notifications) */
+                        if (strcasecmp(g_membres[i].nom, "SYSTEM") == 0) {
+                            continue;
+                        }
+                        /* Extraire le nom de base en retirant le suffixe _Vue s'il existe */
+                        char baseName[ISY_TAILLE_NOM];
+                        strncpy(baseName, g_membres[i].nom, ISY_TAILLE_NOM - 1);
+                        baseName[ISY_TAILLE_NOM - 1] = '\0';
+                        char *suf = strstr(baseName, "_Vue");
+                        if (suf) *suf = '\0';
+                        /* Vérifier si cette base a déjà été ajoutée */
+                        int already = 0;
+                        for (int j = 0; j < addedCount; ++j)
+                        {
+                            if (strcasecmp(addedBases[j], baseName) == 0)
+                            {
+                                already = 1;
+                                break;
+                            }
+                        }
+                        if (already) continue;
 
-                        char info[128];
+                        /* Ajouter le nom de base à la liste des ajoutés */
+                        strncpy(addedBases[addedCount], baseName, ISY_TAILLE_NOM - 1);
+                        addedBases[addedCount][ISY_TAILLE_NOM - 1] = '\0';
+                        addedCount++;
+
+                        /* Déterminer le suffixe si c'est le gestionnaire */
                         char suffixe[32] = "";
-                        if (strcasecmp(g_membres[i].nom, g_moderateurName) == 0) {
+                        if (strcasecmp(baseName, g_moderateurName) == 0) {
                             strcpy(suffixe, " (Gestionnaire)");
                         }
-                        snprintf(info, sizeof(info), "%s%s\n", g_membres[i].nom, suffixe);
+                        char info[128];
+                        snprintf(info, sizeof(info), "%s%s\n", baseName, suffixe);
                         size_t info_len = strlen(info);
-
-                        /* Vérification sécurisée avec espace pour null terminator */
                         if (current_len + info_len + 1 <= ISY_TAILLE_TEXTE) {
                             strcpy(rep.Texte + current_len, info);
                             current_len += info_len;
@@ -495,58 +551,118 @@ int main(int argc, char *argv[])
             /* Commande STATS */
             else if (strncasecmp(cmd, "stats", 5) == 0)
             {
-                /* Prépare un tableau temporaire pour trier les membres */
+                /*
+                 * Prépare un tableau pour consolider les statistiques des membres
+                 * en fusionnant les entrées client et affichage. Chaque baseName
+                 * apparaît une seule fois. Les compteurs de messages et
+                 * durées sont cumulés pour refléter l'activité totale d'un
+                 * membre quelle que soit l'adresse utilisée. Les entrées SYSTEM
+                 * sont ignorées.
+                 */
                 typedef struct {
                     char nom[ISY_TAILLE_NOM + 5];
                     int messages;
-                    double duree;
-                    double intervalle;
+                    time_t date_connexion_min;
+                    time_t somme_dernier_msg;
+                    int count_dernier_msg;
+                    double somme_intervalles;
+                    int total_messages;
                 } StatsEntry;
                 StatsEntry entries[ISY_MAX_MEMBRES];
                 int count = 0;
                 time_t now = time(NULL);
                 for (int i = 0; i < ISY_MAX_MEMBRES; ++i)
                 {
-                    /* Afficher tous les membres non bannis qui ont au moins un message OU qui sont actifs */
-                    if (!g_membres[i].banni && (g_membres[i].actif || g_membres[i].nb_messages > 0))
+                    if (g_membres[i].banni) continue;
+                    if (!(g_membres[i].actif || g_membres[i].nb_messages > 0)) continue;
+                    if (strcasecmp(g_membres[i].nom, "SYSTEM") == 0) continue;
+                    /* Extraire le nom de base (sans _Vue) */
+                    char baseName[ISY_TAILLE_NOM];
+                    strncpy(baseName, g_membres[i].nom, ISY_TAILLE_NOM - 1);
+                    baseName[ISY_TAILLE_NOM - 1] = '\0';
+                    char *suf = strstr(baseName, "_Vue");
+                    if (suf) *suf = '\0';
+
+                    /* Chercher si ce baseName existe déjà dans entries */
+                    int idx = -1;
+                    for (int j = 0; j < count; ++j)
                     {
-                        if (strstr(g_membres[i].nom, "_Vue") != NULL) continue;
-                        double duree = difftime(now, g_membres[i].date_connexion);
-                        double moy = 0.0;
-                        if (g_membres[i].nb_messages > 1)
-                            moy = g_membres[i].somme_intervalles / (g_membres[i].nb_messages - 1);
-                        StatsEntry e;
-                        strcpy(e.nom, g_membres[i].nom);
-                        if (strcasecmp(g_membres[i].nom, g_moderateurName) == 0) strcat(e.nom, "*");
-                        e.messages = g_membres[i].nb_messages;
-                        e.duree = duree;
-                        e.intervalle = moy;
-                        entries[count++] = e;
+                        if (strcasecmp(entries[j].nom, baseName) == 0) {
+                            idx = j;
+                            break;
+                        }
+                    }
+                    if (idx < 0)
+                    {
+                        /* Nouvelle entrée */
+                        idx = count++;
+                        strncpy(entries[idx].nom, baseName, ISY_TAILLE_NOM - 1);
+                        entries[idx].nom[ISY_TAILLE_NOM - 1] = '\0';
+                        entries[idx].messages = 0;
+                        entries[idx].date_connexion_min = now;
+                        entries[idx].somme_dernier_msg = 0;
+                        entries[idx].count_dernier_msg = 0;
+                        entries[idx].somme_intervalles = 0.0;
+                        entries[idx].total_messages = 0;
+                    }
+                    /* Cumuler les stats de ce membre */
+                    entries[idx].total_messages += g_membres[i].nb_messages;
+                    /* date_connexion_min : on prend le plus petit pour la durée de connexion */
+                    if (g_membres[i].date_connexion != 0 && g_membres[i].date_connexion < entries[idx].date_connexion_min)
+                        entries[idx].date_connexion_min = g_membres[i].date_connexion;
+                    /* somme_dernier_msg sert à calculer l'intervalle moyen plus tard */
+                    if (g_membres[i].nb_messages > 1)
+                    {
+                        entries[idx].somme_intervalles += g_membres[i].somme_intervalles;
+                        entries[idx].count_dernier_msg += (g_membres[i].nb_messages - 1);
                     }
                 }
-                /* Tri croissant par nombre de messages puis par durée de connexion */
-                for (int a = 0; a < count; ++a)
+                /* Construire une table triée par nombre de messages et durée */
+                /* Calculer les champs messages/duree/intervalle */
+                typedef struct {
+                    char nom[ISY_TAILLE_NOM + 5];
+                    int messages;
+                    double duree;
+                    double intervalle;
+                } DisplayEntry;
+                DisplayEntry disp[ISY_MAX_MEMBRES];
+                int dispCount = 0;
+                for (int i = 0; i < count; ++i)
                 {
-                    for (int b = a + 1; b < count; ++b)
+                    DisplayEntry e;
+                    /* Ajoute un astérisque pour le gestionnaire */
+                    strcpy(e.nom, entries[i].nom);
+                    if (strcasecmp(entries[i].nom, g_moderateurName) == 0) strcat(e.nom, "*");
+                    e.messages = entries[i].total_messages;
+                    e.duree = difftime(now, entries[i].date_connexion_min);
+                    /* Moyenne des intervalles si au moins un intervalle */
+                    if (entries[i].count_dernier_msg > 0)
+                        e.intervalle = entries[i].somme_intervalles / entries[i].count_dernier_msg;
+                    else
+                        e.intervalle = 0.0;
+                    disp[dispCount++] = e;
+                }
+                /* Tri croissant par nombre de messages puis par durée de connexion */
+                for (int a = 0; a < dispCount; ++a)
+                {
+                    for (int b = a + 1; b < dispCount; ++b)
                     {
-                        if (entries[b].messages < entries[a].messages ||
-                            (entries[b].messages == entries[a].messages && entries[b].duree < entries[a].duree))
+                        if (disp[b].messages < disp[a].messages ||
+                            (disp[b].messages == disp[a].messages && disp[b].duree < disp[a].duree))
                         {
-                            StatsEntry tmp = entries[a];
-                            entries[a] = entries[b];
-                            entries[b] = tmp;
+                            DisplayEntry tmp = disp[a];
+                            disp[a] = disp[b];
+                            disp[b] = tmp;
                         }
                     }
                 }
                 size_t current_len = snprintf(rep.Texte, ISY_TAILLE_TEXTE, "%-10s %-5s %-7s %-7s\n", "Nom", "Msgs", "Conn(s)", "Int(s)");
-                for (int i = 0; i < count; ++i)
+                for (int i = 0; i < dispCount; ++i)
                 {
                     char line[128];
                     snprintf(line, sizeof(line), "%-10s %-5d %-7.0f %-7.1f\n",
-                                entries[i].nom, entries[i].messages, entries[i].duree, entries[i].intervalle);
+                                disp[i].nom, disp[i].messages, disp[i].duree, disp[i].intervalle);
                     size_t line_len = strlen(line);
-
-                    /* Vérification sécurisée avec espace pour null terminator et le footer */
                     if (current_len + line_len + 20 <= ISY_TAILLE_TEXTE) {
                         strcpy(rep.Texte + current_len, line);
                         current_len += line_len;
@@ -554,7 +670,7 @@ int main(int argc, char *argv[])
                         break; /* buffer plein */
                     }
                 }
-                /* Ajouter le footer seulement si il reste de la place */
+                /* Footer si place disponible */
                 const char *footer = "(* = Gestionnaire)";
                 if (current_len + strlen(footer) + 1 <= ISY_TAILLE_TEXTE) {
                     strcpy(rep.Texte + current_len, footer);

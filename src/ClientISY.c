@@ -311,7 +311,7 @@ static void action_dialoguer_groupe(void)
     char buffer[ISY_TAILLE_TEXTE];
     while (1)
     {
-        /* Vérifier d'abord si on a reçu un message BAN (mode non-bloquant) */
+        /* Vérifier d'abord si on a reçu un message BAN, FIN ou REP (mode non-bloquant) */
         struct timeval tv_check = {0, 0}; /* Non-bloquant */
         fd_set readfds_check;
         FD_ZERO(&readfds_check);
@@ -319,20 +319,20 @@ static void action_dialoguer_groupe(void)
 
         if (select(sockG + 1, &readfds_check, NULL, NULL, &tv_check) > 0)
         {
-            MessageISY banCheck;
+            MessageISY checkMsg;
             struct sockaddr_in addrTmp;
             socklen_t lenTmp = sizeof(addrTmp);
-            ssize_t n = recvfrom(sockG, &banCheck, sizeof(banCheck), 0,
+            ssize_t n = recvfrom(sockG, &checkMsg, sizeof(checkMsg), 0,
                                 (struct sockaddr *)&addrTmp, &lenTmp);
             if (n > 0)
             {
-                banCheck.Ordre[ISY_TAILLE_ORDRE - 1] = '\0';
-                if (strcmp(banCheck.Ordre, "BAN") == 0)
+                checkMsg.Ordre[ISY_TAILLE_ORDRE - 1] = '\0';
+                checkMsg.Texte[ISY_TAILLE_TEXTE - 1] = '\0';
+                /* Bannissement : retour au menu */
+                if (strcmp(checkMsg.Ordre, "BAN") == 0)
                 {
-                    /* L'utilisateur a été banni : on informe et on revient au menu */
-                    banCheck.Texte[ISY_TAILLE_TEXTE - 1] = '\0';
                     printf("\n\n--- VOUS AVEZ ÉTÉ BANNI ---\n");
-                    printf("%s\n", banCheck.Texte);
+                    printf("%s\n", checkMsg.Texte);
                     printf("Retour au menu principal...\n");
                     printf("----------------------------\n\n");
                     fermer_socket_udp(sockG);
@@ -341,12 +341,11 @@ static void action_dialoguer_groupe(void)
                     arreter_affichage();
                     return;
                 }
-                else if (strcmp(banCheck.Ordre, "FIN") == 0)
+                /* Groupe fermé : retour au menu */
+                else if (strcmp(checkMsg.Ordre, "FIN") == 0)
                 {
-                    /* Le groupe a été supprimé ou fermé : on affiche le message et on revient au menu */
-                    banCheck.Texte[ISY_TAILLE_TEXTE - 1] = '\0';
                     printf("\n\n--- LE GROUPE A ÉTÉ SUPPRIMÉ ---\n");
-                    printf("%s\n", banCheck.Texte);
+                    printf("%s\n", checkMsg.Texte);
                     printf("Retour au menu principal...\n");
                     printf("---------------------------------\n\n");
                     fermer_socket_udp(sockG);
@@ -354,6 +353,37 @@ static void action_dialoguer_groupe(void)
                     memset(g_nomGroupeActif, 0, sizeof(g_nomGroupeActif));
                     arreter_affichage();
                     return;
+                }
+                /* Redirection suite à fusion : mettre à jour le groupe actif */
+                else if (strcmp(checkMsg.Ordre, "REP") == 0)
+                {
+                    char newGroup[ISY_TAILLE_NOM];
+                    int newPort = 0;
+                    if (sscanf(checkMsg.Texte, "Fusion : Rejoignez '%[^']' (port %d)", newGroup, &newPort) == 2 && newPort > 0)
+                    {
+                        printf("\n\n--- FUSION DETECTÉE ---\n");
+                        printf("Votre groupe '%s' a fusionné dans '%s'. Bascule vers '%s' (port %d).\n", g_nomGroupeActif, newGroup, newGroup, newPort);
+                        /* Fermer socket et affichage actuels */
+                        fermer_socket_udp(sockG);
+                        arreter_affichage();
+                        /* Mettre à jour les variables de groupe actif */
+                        g_portGroupeActif = newPort;
+                        strncpy(g_nomGroupeActif, newGroup, ISY_TAILLE_TEXTE - 1);
+                        g_nomGroupeActif[ISY_TAILLE_TEXTE - 1] = '\0';
+                        /* Relancer l'affichage sur le nouveau port */
+                        lancer_affichage(g_portGroupeActif, g_nomUtilisateur);
+                        /* Réinitialiser le socket de communication avec le groupe */
+                        sockG = creer_socket_udp();
+                        if (sockG < 0)
+                        {
+                            printf("Erreur création socket pour le nouveau groupe.\n");
+                            g_portGroupeActif = 0;
+                            memset(g_nomGroupeActif, 0, sizeof(g_nomGroupeActif));
+                            return;
+                        }
+                        init_sockaddr(&addrG, ISY_IP_SERVEUR, g_portGroupeActif);
+                        continue; /* Reprendre la boucle avec le nouveau groupe */
+                    }
                 }
             }
         }
@@ -480,6 +510,35 @@ static void action_dialoguer_groupe(void)
                         arreter_affichage();
                         return;
                     }
+                    /* Traiter une fusion : ordre REP */
+                    else if (strcmp(rep.Ordre, "REP") == 0)
+                    {
+                        char newGroup[ISY_TAILLE_NOM];
+                        int newPort = 0;
+                        if (sscanf(rep.Texte, "Fusion : Rejoignez '%[^']' (port %d)", newGroup, &newPort) == 2 && newPort > 0)
+                        {
+                            printf("\n--- FUSION DETECTÉE ---\n");
+                            printf("Votre groupe '%s' a fusionné dans '%s'. Bascule vers '%s' (port %d).\n", g_nomGroupeActif, newGroup, newGroup, newPort);
+                            fermer_socket_udp(sockG);
+                            arreter_affichage();
+                            g_portGroupeActif = newPort;
+                            strncpy(g_nomGroupeActif, newGroup, ISY_TAILLE_TEXTE - 1);
+                            g_nomGroupeActif[ISY_TAILLE_TEXTE - 1] = '\0';
+                            lancer_affichage(g_portGroupeActif, g_nomUtilisateur);
+                            sockG = creer_socket_udp();
+                            if (sockG < 0)
+                            {
+                                printf("Erreur création socket pour le nouveau groupe.\n");
+                                g_portGroupeActif = 0;
+                                memset(g_nomGroupeActif, 0, sizeof(g_nomGroupeActif));
+                                return;
+                            }
+                            init_sockaddr(&addrG, ISY_IP_SERVEUR, g_portGroupeActif);
+                            /* On reste en mode commande mais change de groupe */
+                            /* Continuer à attendre la réponse à la commande avec le nouveau groupe */
+                            continue;
+                        }
+                    }
                     /* Ignorer silencieusement les autres types de messages (MSG, etc.) */
                 }
             }
@@ -502,7 +561,7 @@ static void action_dialoguer_groupe(void)
             perror("sendto Client->Groupe");
         }
 
-        /* Vérifier si on a reçu un message BAN du serveur (mode non-bloquant) */
+        /* Vérifier si on a reçu un message BAN/FIN/REP du serveur (mode non-bloquant) */
         struct timeval tv = {0, 50000}; /* 50ms timeout */
         fd_set readfds;
         FD_ZERO(&readfds);
@@ -510,19 +569,19 @@ static void action_dialoguer_groupe(void)
 
         if (select(sockG + 1, &readfds, NULL, NULL, &tv) > 0)
         {
-            MessageISY banCheck;
+            MessageISY chk;
             struct sockaddr_in addrTmp;
             socklen_t lenTmp = sizeof(addrTmp);
-            ssize_t n = recvfrom(sockG, &banCheck, sizeof(banCheck), 0,
+            ssize_t n = recvfrom(sockG, &chk, sizeof(chk), 0,
                                 (struct sockaddr *)&addrTmp, &lenTmp);
             if (n > 0)
             {
-                banCheck.Ordre[ISY_TAILLE_ORDRE - 1] = '\0';
-                banCheck.Texte[ISY_TAILLE_TEXTE - 1] = '\0';
-                if (strcmp(banCheck.Ordre, "BAN") == 0)
+                chk.Ordre[ISY_TAILLE_ORDRE - 1] = '\0';
+                chk.Texte[ISY_TAILLE_TEXTE - 1] = '\0';
+                if (strcmp(chk.Ordre, "BAN") == 0)
                 {
                     printf("\n\n--- VOUS AVEZ ÉTÉ BANNI ---\n");
-                    printf("%s\n", banCheck.Texte);
+                    printf("%s\n", chk.Texte);
                     printf("Retour au menu principal...\n");
                     printf("----------------------------\n\n");
                     fermer_socket_udp(sockG);
@@ -531,10 +590,10 @@ static void action_dialoguer_groupe(void)
                     arreter_affichage();
                     return;
                 }
-                else if (strcmp(banCheck.Ordre, "FIN") == 0)
+                else if (strcmp(chk.Ordre, "FIN") == 0)
                 {
                     printf("\n\n--- LE GROUPE A ÉTÉ SUPPRIMÉ ---\n");
-                    printf("%s\n", banCheck.Texte);
+                    printf("%s\n", chk.Texte);
                     printf("Retour au menu principal...\n");
                     printf("---------------------------------\n\n");
                     fermer_socket_udp(sockG);
@@ -542,6 +601,32 @@ static void action_dialoguer_groupe(void)
                     memset(g_nomGroupeActif, 0, sizeof(g_nomGroupeActif));
                     arreter_affichage();
                     return;
+                }
+                else if (strcmp(chk.Ordre, "REP") == 0)
+                {
+                    char newGroup[ISY_TAILLE_NOM];
+                    int newPort = 0;
+                    if (sscanf(chk.Texte, "Fusion : Rejoignez '%[^']' (port %d)", newGroup, &newPort) == 2 && newPort > 0)
+                    {
+                        printf("\n\n--- FUSION DETECTÉE ---\n");
+                        printf("Votre groupe '%s' a fusionné dans '%s'. Bascule vers '%s' (port %d).\n", g_nomGroupeActif, newGroup, newGroup, newPort);
+                        fermer_socket_udp(sockG);
+                        arreter_affichage();
+                        g_portGroupeActif = newPort;
+                        strncpy(g_nomGroupeActif, newGroup, ISY_TAILLE_TEXTE - 1);
+                        g_nomGroupeActif[ISY_TAILLE_TEXTE - 1] = '\0';
+                        lancer_affichage(g_portGroupeActif, g_nomUtilisateur);
+                        sockG = creer_socket_udp();
+                        if (sockG < 0)
+                        {
+                            printf("Erreur création socket pour le nouveau groupe.\n");
+                            g_portGroupeActif = 0;
+                            memset(g_nomGroupeActif, 0, sizeof(g_nomGroupeActif));
+                            return;
+                        }
+                        init_sockaddr(&addrG, ISY_IP_SERVEUR, g_portGroupeActif);
+                        continue;
+                    }
                 }
             }
         }

@@ -9,6 +9,9 @@
 
 int main(int argc, char *argv[])
 {
+    /* après monNom */
+const char *selfExe = argv[0];
+
     /* 1. On vérifie qu'on a bien 2 arguments : port et nom */
     if (argc < 3)
     {
@@ -113,6 +116,29 @@ int main(int argc, char *argv[])
             printf("Vous avez été exclu du groupe. Fermeture automatique...\n");
             break;
         }
+        else if (strcmp(msg.Ordre, "REP") == 0)
+{
+    /* Format attendu : "Fusion : Rejoignez '<nom>' (port <n>)" */
+    char nouveauGroupe[ISY_TAILLE_TEXTE] = "";
+    int nouveauPort = -1;
+
+    if (sscanf(msg.Texte, "Fusion : Rejoignez '%[^']' (port %d)", nouveauGroupe, &nouveauPort) == 2 &&
+        nouveauPort > 0 && nouveauPort <= 65535)
+    {
+        printf("--- Fusion détectée : bascule vers '%s' (port %d) ---\n", nouveauGroupe, nouveauPort);
+        fflush(stdout);
+
+        fermer_socket_udp(sock);
+
+        char portStr[16];
+        snprintf(portStr, sizeof(portStr), "%d", nouveauPort);
+
+        execlp(selfExe, selfExe, portStr, monNom, (char *)NULL);
+        perror("execlp AffichageISY (fusion)");
+        exit(EXIT_FAILURE);
+    }
+}
+
     }
 
     fermer_socket_udp(sock);
