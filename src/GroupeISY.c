@@ -574,7 +574,9 @@ int main(int argc, char *argv[])
                 for (int i = 0; i < ISY_MAX_MEMBRES; ++i)
                 {
                     if (g_membres[i].banni) continue;
-                    if (!(g_membres[i].actif || g_membres[i].nb_messages > 0)) continue;
+  if (g_membres[i].nom[0] == '\0') continue;
+if (strcasecmp(g_membres[i].nom, "SYSTEM") == 0) continue;
+if (g_membres[i].banni) continue;
                     if (strcasecmp(g_membres[i].nom, "SYSTEM") == 0) continue;
                     /* Extraire le nom de base (sans _Vue) */
                     char baseName[ISY_TAILLE_NOM];
@@ -663,7 +665,7 @@ int main(int argc, char *argv[])
                     snprintf(line, sizeof(line), "%-10s %-5d %-7.0f %-7.1f\n",
                                 disp[i].nom, disp[i].messages, disp[i].duree, disp[i].intervalle);
                     size_t line_len = strlen(line);
-                    if (current_len + line_len + 20 <= ISY_TAILLE_TEXTE) {
+                    if (current_len + line_len + 1 <= ISY_TAILLE_TEXTE) {
                         strcpy(rep.Texte + current_len, line);
                         current_len += line_len;
                     } else {
