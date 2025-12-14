@@ -83,33 +83,31 @@ Ensuite, lancez un ou plusieurs clients dans d'autres terminaux :
 ./bin/ClientISY
 ```
 
-2. Menu Principal
-Une fois connecté avec votre pseudo :
+2. Menu Principal : 
+Une fois connecté avec votre pseudo
 
-    1. Créer un groupe : Démarre une nouvelle salle sur le serveur.
+    a). Créer un groupe : Démarre une nouvelle salle sur le serveur.
 
-    2. Lister les groupes : Affiche les groupes disponibles et leurs ports.
+    b). Lister les groupes : Affiche les groupes disponibles et leurs ports.
 
-    3. Rejoindre un groupe : Connecte le client et ouvre la fenêtre de réception xterm.
+    c). Rejoindre un groupe : Connecte le client et ouvre la fenêtre de réception xterm.
 
-    4. Dialoguer : Permet d'envoyer des messages au groupe actif.
+    d). Dialoguer : Permet d'envoyer des messages au groupe actif.
 
-    5. Quitter le groupe : Ferme la fenêtre de réception.
+    e). Quitter le groupe : Ferme la fenêtre de réception.
 
-    6. Supprimer un groupe : (Modérateur uniquement) Supprime le groupe et éjecte les membres.
+    f). Supprimer un groupe : (Modérateur uniquement) Supprime le groupe et éjecte les membres.
 
-    7. Fusionner : (Modérateur uniquement) Fusionne deux groupes en un seul.
+    g). Fusionner : (Modérateur uniquement) Fusionne deux groupes en un seul.
 
-3. Commandes Spéciales (Chat)
-Lorsque vous êtes dans le mode "Dialoguer" (Option 4), vous pouvez taper cmd pour entrer en mode commande :
+3. Commandes Spéciales :
+Lorsque vous êtes dans le menu "Dialoguer" (Option 4), vous pouvez taper cmd pour entrer en mode commande :
 
 - list : Affiche les membres connectés au groupe.
 
 - stats : Affiche les statistiques d'activité des membres.
 
 - ban <nom> : (Modérateur) Bannit un utilisateur du groupe.
-
-- delete <nom> : (Modérateur) Exclut un utilisateur.
 
 - msg : Retourner au mode d'envoi de messages classique.
 
@@ -126,17 +124,3 @@ ClientISY.c : L'interface utilisateur. Il gère le menu textuel, envoie les requ
 GroupeISY.c : Le processus de salle. Il reçoit les messages, gère les statistiques, applique la modération et redistribue les messages aux membres.
 
 AffichageISY.c : Le processus de réception. Il tourne dans une fenêtre xterm séparée, reçoit les messages UDP, les déchiffre et les affiche.
-
-#### Architecture Technique
-Extrait de code
-
-graph TD
-    User[Utilisateur] --> Client[ClientISY (Menu)]
-    Client -- Requêtes (CRG, JNG...) --> Serveur[ServeurISY :8000]
-    
-    Serveur -- fork() --> Groupe[GroupeISY :PortX]
-    Client -- fork() --> Affiche[AffichageISY (xterm)]
-    
-    Client -- Envoi MSG (UDP) --> Groupe
-    Groupe -- Diffusion MSG (UDP) --> Affiche
-
