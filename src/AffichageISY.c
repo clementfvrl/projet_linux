@@ -36,7 +36,9 @@ const char *selfExe = argv[0];
         exit(EXIT_FAILURE);
 
     struct sockaddr_in addrLocal;
-    init_sockaddr(&addrLocal, ISY_IP_SERVEUR, 0);
+   addrLocal.sin_family = AF_INET;
+addrLocal.sin_addr.s_addr = INADDR_ANY;
+addrLocal.sin_port = 0;
     if (bind(sock, (struct sockaddr *)&addrLocal, sizeof(addrLocal)) < 0)
     {
         perror("bind AffichageISY");

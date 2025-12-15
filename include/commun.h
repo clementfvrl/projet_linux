@@ -23,7 +23,7 @@
 /* ==== CONSTANTES GÉNÉRALES ==== */
 
 #define ISY_PORT_SERVEUR 8000
-#define ISY_IP_SERVEUR "127.0.0.1"
+#define ISY_IP_SERVEUR "172.20.10.4"
 
 #define ISY_MAX_GROUPES 16
 #define ISY_MAX_MEMBRES 32
