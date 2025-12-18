@@ -62,6 +62,25 @@ sudo apt install build-essential xterm xfonts-base xfonts-terminus fonts-dejavu
 sudo dnf install make automake gcc gcc-c++ kernel-devel xterm xorg-x11-fonts-misc terminus-fonts
 ```
 
+- Configurer l'adresse IP du serveur :
+
+```bash
+# Dans les fichiers `commun.h`, changez l'adresse IP du Serveur
+# Remplacez par l'adresse ip de votre machine
+define ISY_IP_SERVEUR "172.20.10.4"
+
+# Pour connaître votre adresse IP, exécutez :
+
+# Windows
+ipconfig
+
+# MacOS
+ifconfig
+
+# Linux
+ip a
+```
+
 ## Compilation
 
 ```bash
