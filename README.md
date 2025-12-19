@@ -174,7 +174,6 @@ git push
 │   ├── GroupeISY
 │   └── ServeurISY
 ├── docs
-│   ├── Architecture Logicielle
 │   ├── Architecture_Logicielle
 │   │   ├── ArchitectureISYV1.pdf
 │   │   └── Architecture_ISY_V1.drawio
@@ -183,7 +182,6 @@ git push
 │   │   ├── DiagrammeFlux_Projet_a_jourV3.drawio.pdf
 │   │   └── Old
 │   ├── EnonceProjet.pdf
-│   ├── Fiches_Version
 │   ├── Gantt
 │   │   ├── GanttProjet.gan
 │   │   └── GanttProjet.pdf
