@@ -161,3 +161,57 @@ git add .
 git commit -m "mon message"
 git push
 ```
+
+## Architecture des fichiers
+
+```txt
+.
+├── Makefile
+├── README.md
+├── bin
+│   ├── AffichageISY
+│   ├── ClientISY
+│   ├── GroupeISY
+│   └── ServeurISY
+├── docs
+│   ├── Architecture Logicielle
+│   ├── Architecture_Logicielle
+│   │   ├── ArchitectureISYV1.pdf
+│   │   └── Architecture_ISY_V1.drawio
+│   ├── Diagramme
+│   │   ├── DiagrammeFlux_Projet_a_jourV3.drawio
+│   │   ├── DiagrammeFlux_Projet_a_jourV3.drawio.pdf
+│   │   └── Old
+│   ├── EnonceProjet.pdf
+│   ├── Fiches_Version
+│   ├── Gantt
+│   │   ├── GanttProjet.gan
+│   │   └── GanttProjet.pdf
+│   ├── Presentation
+│   │   ├── Old
+│   │   └── ProjetISY_Groupe1_FAVAREL_MURGIA_PRUDHOMME_QUIVRONT.pptx
+│   └── use_cases
+│       ├── CreerGroupe.puml
+│       ├── EcrireMessageGroupe.puml
+│       ├── FusionGroupe.puml
+│       ├── General.puml
+│       ├── LireMessageGroupe.puml
+│       ├── ListerGroupe.puml
+│       ├── ListerMembresGroupe.puml
+│       ├── ModererMembre.puml
+│       ├── QuitterGroupe.puml
+│       ├── RejoindreGroupe.puml
+│       └── SupprimerGroupe.puml
+├── include
+│   └── commun.h
+├── obj
+│   ├── AffichageISY.o
+│   ├── ClientISY.o
+│   ├── GroupeISY.o
+│   └── ServeurISY.o
+└── src
+    ├── AffichageISY.c
+    ├── ClientISY.c
+    ├── GroupeISY.c
+    └── ServeurISY.c
+```
