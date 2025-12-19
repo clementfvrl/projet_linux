@@ -13,7 +13,7 @@ struct UserInfo
     int actif; // 0 = inactif, 1 = actif
 };
 
-/* CORRECTION 1 : Ajout de 'struct' devant UserInfo */
+/* UserInfo */
 static struct UserInfo g_users[ISY_MAX_MEMBRES];
 
 static int sock_serveur = -1;
@@ -252,7 +252,7 @@ int main(void)
     }
 
     init_groupes();
-    /* --- AJOUT : Initialisation du tableau des utilisateurs à 0 --- */
+    /* --- Initialisation du tableau des utilisateurs à 0 --- */
     memset(&g_users, 0, sizeof(g_users));
 
     sock_serveur = creer_socket_udp();
@@ -316,7 +316,7 @@ int main(void)
         memset(&msgRep, 0, sizeof(msgRep));
         strncpy(msgRep.Emetteur, "Serveur", ISY_TAILLE_NOM - 1);
 
-        /* --- AJOUT : Logique de Connexion (CON) --- */
+        /* --- Logique de Connexion (CON) --- */
         if (strcmp(msgReq.Ordre, "CON") == 0)
         {
             /* Validation du nom d'utilisateur */
@@ -363,7 +363,7 @@ int main(void)
                 }
             } /* Fin du else de validation */
 
-            /* --- AJOUT : Logique de Déconnexion (DEC) --- */
+            /* --- Logique de Déconnexion (DEC) --- */
         }
         else if (strcmp(msgReq.Ordre, "DEC") == 0)
         {
@@ -379,7 +379,7 @@ int main(void)
             snprintf(msgRep.Ordre, ISY_TAILLE_ORDRE, "ACK");
             snprintf(msgRep.Texte, ISY_TAILLE_TEXTE, "Au revoir");
 
-            /* CORRECTION 3 : Ajout du 'else' et fermeture de l'accolade manquante */
+            
         }
         else if (strcmp(msgReq.Ordre, "CRG") == 0)
         {
@@ -447,7 +447,7 @@ int main(void)
                 g_groupes[idx].moderateurName[0] = '\0';
                 g_groupes[idx].pid = 0;
 
-                /* 4. REPONSE CRUCIALE : "OK" pour que le client ferme sa fenêtre */
+                /* 4. REPONSE "OK" pour que le client ferme sa fenêtre */
                 snprintf(msgRep.Ordre, ISY_TAILLE_ORDRE, "OK");
                 snprintf(msgRep.Texte, ISY_TAILLE_TEXTE, "Groupe supprime");
             }

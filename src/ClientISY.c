@@ -716,8 +716,6 @@ static void action_supprimer_groupe(void)
 
     printf("Reponse serveur : [%s] %s\n", rep.Ordre, rep.Texte);
 
-    /* --- MODIFICATION ICI --- */
-
     /* 1. On vérifie si le serveur a validé la suppression (Code "OK") */
     if (strcmp(rep.Ordre, "OK") == 0)
     {
@@ -789,7 +787,7 @@ static void afficher_menu(void)
     printf("Votre choix : ");
 }
 
-/* --- AJOUT : Gestion de la connexion au démarrage --- */
+/* --- Gestion de la connexion au démarrage --- */
 static int login_au_serveur(void)
 {
     MessageISY req, rep;
@@ -831,7 +829,7 @@ static int login_au_serveur(void)
     }
 }
 
-/* --- AJOUT : Gestion de la déconnexion à la fermeture --- */
+/* --- Gestion de la déconnexion à la fermeture --- */
 static void logout_du_serveur(void)
 {
     MessageISY req, rep;
@@ -845,7 +843,7 @@ static void logout_du_serveur(void)
     printf("Deconnexion : %s\n", rep.Texte);
 }
 
-/* --- AJOUT : Fonctions esthétiques --- */
+/* --- Fonctions esthétiques --- */
 static void nettoyer_ecran(void)
 {
     /* Séquence ANSI pour effacer l'écran et remettre le curseur en haut à gauche */
